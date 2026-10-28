@@ -17,6 +17,7 @@ repository is how that code can be read and checked.
 | `desktop/releases.json` | The SHA-256 of every release, newest first |
 | `_headers` | The site's HTTP headers, including the page's Content Security Policy |
 | `verify.mjs` | Checks this source and the live site against `releases.json` |
+| `.github/workflows/verify.yml` | Runs `verify.mjs` every hour, in public |
 
 Each release is one commit, made when it is deployed. The history is the record:
 a release can't be changed or removed without that showing here.
@@ -31,6 +32,10 @@ node verify.mjs
 
 It checks that the source here is the newest release, that the live page is a
 published release, and that every script the page loads matches its pin.
+
+It also runs by itself: every hour, [a GitHub Actions check](../../actions/workflows/verify.yml)
+does the same from GitHub's machines, and every run is public. If the page stops
+matching, it opens an issue here, and closes it once the page matches again.
 
 Or by hand: `curl -s https://captry.app/desktop/ | shasum -a 256` prints the same
 hash as the newest `index` in `desktop/releases.json`. That one hash covers the
