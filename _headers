@@ -1,0 +1,24 @@
+# no-transform: Cloudflare adds nothing to a page (no bot-detection or
+# analytics script), so what is served is byte for byte what was published.
+/*
+  Cache-Control: public, max-age=300, must-revalidate, no-transform
+  Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  X-Robots-Tag: index, follow
+
+# The desktop viewer runs a script and shows images and audio it decrypted
+# itself. One network destination: the relay that carries sealed captures to
+# the phone. The backup itself never leaves the browser, and this header is
+# what holds the page to that, not the code.
+/desktop/*
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-pagEOBUNXlRJkxJ89mty12sDbnfqUspZul8Dqc8sDu4='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  ! X-Robots-Tag
+  X-Robots-Tag: noindex
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff

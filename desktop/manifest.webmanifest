@@ -1,0 +1,32 @@
+{
+  "name": "Captry on your computer",
+  "short_name": "Captry",
+  "description": "Read your Captry captures and send new ones to your phone.",
+  "id": "/desktop/",
+  "start_url": "/desktop/",
+  "scope": "/desktop/",
+  "display": "standalone",
+  "background_color": "#121428",
+  "theme_color": "#080b1f",
+  "icons": [
+    {
+      "src": "../assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "../assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "share_target": {
+    "action": "/desktop/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}
