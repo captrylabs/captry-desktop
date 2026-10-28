@@ -10,7 +10,8 @@
 // 2. fetches the live page and finds its hash in releases.json;
 // 3. fetches every script the page pins and checks each against its SHA-384.
 //
-// Exits 1 on any mismatch. Needs Node 18 or later; nothing to install.
+// Exits 1 on a mismatch, and 2 when it could not check at all (the site was
+// unreachable, or refused this machine). Needs Node 18 or later.
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -51,9 +52,20 @@ for (const [name, expected] of Object.entries(newest.files)) {
 }
 
 // 2. The live page is a published release.
+// Not being able to look is not a mismatch, and is reported as its own thing.
 const get = async (url) => {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  let response;
+  try {
+    response = await fetch(url, { cache: "no-store" });
+  } catch (e) {
+    console.log(`COULD NOT CHECK  ${url}: ${e.cause?.code ?? e.message}`);
+    process.exit(ok ? 2 : 1);
+  }
+  if (!response.ok) {
+    const challenged = response.headers.get("cf-mitigated");
+    console.log(`COULD NOT CHECK  ${url} answered ${response.status}${challenged ? ` (Cloudflare: ${challenged})` : ""}`);
+    process.exit(ok ? 2 : 1);
+  }
   return Buffer.from(await response.arrayBuffer());
 };
 const page = await get(`${origin}/desktop/`);

@@ -1,7 +1,9 @@
 # Checks every hour that captry.app/desktop serves exactly a release published
-# here. Every run is public under Actions. When a check fails three times in a
-# row it opens an issue, so a mismatch is on the record, not just in an inbox;
-# when the site matches again, that issue is closed.
+# here. Every run is public under Actions. When the page fails to match three
+# times in a row it opens an issue, so a mismatch is on the record, not just in
+# an inbox; when the site matches again, that issue is closed. A run that could
+# not look at all (the site down, or refusing GitHub's machines) fails without
+# an issue: that says nothing about the page.
 
 name: Verify captry.app/desktop
 
@@ -34,13 +36,19 @@ jobs:
           # A network blip or a deploy still reaching every edge is not a mismatch:
           # three tries, a minute apart.
           for attempt in 1 2 3; do
-            if node verify.mjs | tee result.txt; then
+            set +e
+            node verify.mjs > result.txt
+            code=$?
+            set -e
+            cat result.txt
+            if [ "$code" = 0 ]; then
               echo "ok=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             [ "$attempt" = 3 ] || sleep 60
           done
-          echo "ok=false" >> "$GITHUB_OUTPUT"
+          # 1: the page does not match. 2: it could not be checked.
+          if [ "$code" = 1 ]; then echo "ok=false" >> "$GITHUB_OUTPUT"; else echo "ok=unknown" >> "$GITHUB_OUTPUT"; fi
           exit 1
 
       - name: Open an issue on a mismatch
