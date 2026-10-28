@@ -1,0 +1,72 @@
+# Checks every hour that captry.app/desktop serves exactly a release published
+# here. Every run is public under Actions. When a check fails three times in a
+# row it opens an issue, so a mismatch is on the record, not just in an inbox;
+# when the site matches again, that issue is closed.
+
+name: Verify captry.app/desktop
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the live page against releases.json
+        id: check
+        shell: bash
+        run: |
+          # A network blip or a deploy still reaching every edge is not a mismatch:
+          # three tries, a minute apart.
+          for attempt in 1 2 3; do
+            if node verify.mjs | tee result.txt; then
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            [ "$attempt" = 3 ] || sleep 60
+          done
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Open an issue on a mismatch
+        if: failure() && steps.check.outputs.ok == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          title="captry.app/desktop does not match a published release"
+          body=$(printf 'The hourly check failed three times in a row.\n\n```\n%s\n```\n\nRun: %s' "$(cat result.txt)" "$RUN")
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Close the issue once the site matches again
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          title="captry.app/desktop does not match a published release"
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue close "$open" --comment "The site matches a published release again: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
