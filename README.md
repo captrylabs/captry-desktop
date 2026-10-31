@@ -58,6 +58,6 @@ The full account is in the [privacy policy](https://captry.app/privacy/).
 
 ## Reporting a problem
 
-Security or privacy issues: privacy@captry.app.
+Security or privacy issues: support@captry.app.
 
 The code is published to be read and checked. All rights reserved.
