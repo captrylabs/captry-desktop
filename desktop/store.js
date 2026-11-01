@@ -96,6 +96,15 @@ export function loadLibrary() {
   return safely(() => run(LIBRARY, "readonly", (s) => s.get("current")), null);
 }
 
+/** New capture's draft, sealed like everything else here; null clears it. */
+export function saveDraft(sealed) {
+  return safely(() => run(LIBRARY, "readwrite", (s) => (sealed ? s.put(sealed, "draft") : s.delete("draft"))), null);
+}
+
+export function loadDraft() {
+  return safely(() => run(LIBRARY, "readonly", (s) => s.get("draft")), null);
+}
+
 export function loadImage(name) {
   return safely(() => run(IMAGES, "readonly", (s) => s.get(name)), null).then((r) => r?.sealed ?? null);
 }

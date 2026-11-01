@@ -8,7 +8,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=45";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=46";
 import {
   FILTERS,
   RANGES,
@@ -26,11 +26,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=45";
-import * as lines from "./list-lines.js?v=45";
-import * as store from "./store.js?v=45";
-import * as relay from "./relay.js?v=45";
-import * as pair from "./pair.js?v=45";
+} from "./library.js?v=46";
+import * as lines from "./list-lines.js?v=46";
+import * as store from "./store.js?v=46";
+import * as relay from "./relay.js?v=46";
+import * as pair from "./pair.js?v=46";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -474,7 +474,8 @@ function showOpened(previous) {
   el.deviceMenuName.textContent = phone;
   watchDelivery();
   syncFeed();
-  takeArrived();
+  // A draft from last time comes back first, so a share arriving now adds to it.
+  restoreDraft().finally(takeArrived);
   connectLive();
   mergeSent();
   updateSync();
@@ -710,6 +711,7 @@ if (bookmarklet) {
 el.composeCancel.addEventListener("click", () => {
   resetCompose();
   el.compose.close();
+  store.saveDraft(null);
 });
 
 function describeDestination() {
@@ -840,8 +842,8 @@ function presetTime(when) {
     d.setDate(d.getDate() + 1);
     d.setHours(9, 0);
   } else {
-    // Next Monday, even on a Monday.
-    d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+    // A week from today in the morning, as the phone's Next week is.
+    d.setDate(d.getDate() + 7);
     d.setHours(9, 0);
   }
   return d;
@@ -895,6 +897,72 @@ function composeHasContent() {
     el.composeNoteInput.value.trim() || [el.composeRemind, el.composePin, el.composePrivate].some(pressed));
 }
 
+// --- the draft, kept in this browser ------------------------------------------------
+//
+// Sealed with the library's key, like what was sent, so nothing typed sits
+// readable in the browser's storage, and dropped with the pairing. Not kept
+// at all for a pairing that is not remembered.
+
+let draftTimer = 0;
+
+function keepDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 400);
+}
+
+async function saveDraft() {
+  const key = opened?.key;
+  if (!key || opened.ephemeral) return;
+  el.newCapture.classList.toggle("has-draft", composeHasContent() && !el.compose.open);
+  if (!composeHasContent()) {
+    await store.saveDraft(null);
+    return;
+  }
+  const draft = {
+    text: el.composeText.value,
+    image: composeImage ? { mimeType: composeImage.mimeType, data: toBase64(composeImage.bytes) } : null,
+    collections: composeCollections,
+    toggles: Object.fromEntries(["composeRemind", "composePin", "composePrivate", "composeMore"].map((k) => [k, pressed(el[k])])),
+    remindAt: el.composeRemindAt.value,
+    repeat: el.composeRepeat.value,
+    pinWhere: el.composePinWhere.value,
+    title: el.composeTitleInput.value,
+    note: el.composeNoteInput.value,
+  };
+  await store.saveDraft(await sealCache(key, new TextEncoder().encode(JSON.stringify(draft))));
+}
+
+/** Puts a kept draft back into New capture, without opening it. */
+async function restoreDraft() {
+  const key = opened?.key;
+  if (!key || opened.ephemeral || composeHasContent()) return;
+  const bytes = await openCache(key, await store.loadDraft());
+  if (!bytes) return;
+  try {
+    const d = JSON.parse(new TextDecoder().decode(bytes));
+    el.composeText.value = d.text ?? "";
+    if (d.image?.data) {
+      const raw = fromBase64(d.image.data);
+      setComposeImage({ mimeType: d.image.mimeType, bytes: raw, blob: new Blob([raw], { type: safeMime(d.image.mimeType) }) });
+    }
+    composeCollections = Array.isArray(d.collections) ? d.collections : [];
+    for (const [k, on] of Object.entries(d.toggles ?? {})) el[k]?.setAttribute("aria-pressed", String(!!on));
+    el.composeRemindAt.value = d.remindAt ?? "";
+    el.composeRepeat.value = d.repeat ?? "";
+    el.composeTitleInput.value = d.title ?? "";
+    el.composeNoteInput.value = d.note ?? "";
+    renderComposeOptions();
+    el.composePinWhere.value = d.pinWhere ?? "";
+    el.newCapture.classList.toggle("has-draft", composeHasContent());
+  } catch (e) {
+    await store.saveDraft(null);
+  }
+}
+
+el.compose.addEventListener("input", keepDraft);
+el.compose.addEventListener("click", keepDraft);
+el.compose.addEventListener("close", saveDraft);
+
 /** Empties New capture: after sending, on Discard, and when the pairing closes. */
 function resetCompose() {
   el.composeText.value = "";
@@ -908,6 +976,7 @@ function resetCompose() {
   el.composeTitleInput.value = "";
   el.composeNoteInput.value = "";
   renderComposeOptions();
+  el.newCapture.classList.remove("has-draft");
 }
 
 /** What the options ask for, or a reason they can't be sent as they are. */
@@ -994,6 +1063,7 @@ el.compose.addEventListener("submit", async (event) => {
     await saveSent(record);
     resetCompose();
     el.compose.close();
+    store.saveDraft(null);
     mergeSent();
     renderNav();
     refresh();
@@ -1396,6 +1466,114 @@ function tickButton(c, name, className) {
   return b;
 }
 
+const REPEAT_WORDS = { DAILY: "every day", WEEKLY: "every week", MONTHLY: "every month" };
+
+/** A reminder's time, the day named when it is near. */
+function reminderWhen(at) {
+  const d = new Date(at);
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === today.toDateString()) return `Today, ${time}`;
+  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow, ${time}`;
+  return d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+/** Reminders still to come, each with an x to cancel it on the phone. */
+function remindersSection(c) {
+  const s = document.createElement("section");
+  const h = document.createElement("h3");
+  h.append("Reminders");
+  const ul = document.createElement("ul");
+  ul.className = "reminders";
+  for (const r of c.reminders) {
+    const li = document.createElement("li");
+    const when = document.createElement("span");
+    when.className = "when";
+    when.append(reminderWhen(r.at));
+    if (r.repeat && REPEAT_WORDS[r.repeat]) {
+      const rep = document.createElement("span");
+      rep.className = "repeat";
+      rep.textContent = ` · ${REPEAT_WORDS[r.repeat]}`;
+      when.append(rep);
+    }
+    li.append(icon("bell"), when);
+    if (editable(c)) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "cchip-x";
+      x.append(icon("x", 13));
+      x.setAttribute("aria-label", `Cancel the reminder for ${reminderWhen(r.at)}`);
+      x.title = "Cancel this reminder";
+      x.addEventListener("click", () => sendChange(c, [{ op: "unremind", at: r.at }]));
+      li.append(x);
+    }
+    ul.append(li);
+  }
+  s.append(h, ul);
+  return s;
+}
+
+/** Remind: a time (the usual three a click away) and how often, under the tools. */
+function openReminder(c) {
+  const editor = el.detail.querySelector(".editor");
+  if (!editor) return;
+  editor.replaceChildren();
+  editor.hidden = false;
+  const form = document.createElement("form");
+  form.className = "remind-form";
+  const at = document.createElement("input");
+  at.type = "datetime-local";
+  at.className = "compose-field";
+  at.setAttribute("aria-label", "Remind at");
+  at.value = localInput(presetTime("tomorrow"));
+  const presets = document.createElement("span");
+  presets.className = "compose-presets";
+  for (const [when, label] of [["tonight", "Tonight"], ["tomorrow", "Tomorrow"], ["week", "Next week"]]) {
+    if (when === "tonight" && new Date().getHours() >= 19) continue;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip-button";
+    b.textContent = label;
+    b.addEventListener("click", () => { at.value = localInput(presetTime(when)); });
+    presets.append(b);
+  }
+  const repeat = document.createElement("select");
+  repeat.className = "compose-field";
+  repeat.setAttribute("aria-label", "Repeat");
+  repeat.append(option("", "Once"), option("DAILY", "Every day"), option("WEEKLY", "Every week"), option("MONTHLY", "Every month"));
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "button small primary";
+  save.textContent = "Set";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "button small";
+  cancel.textContent = "Cancel";
+  const close = () => {
+    editor.hidden = true;
+    editor.replaceChildren();
+  };
+  cancel.addEventListener("click", close);
+  form.append(presets, at, repeat, save, cancel);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const when = at.value ? new Date(at.value).getTime() : NaN;
+    if (!(when > Date.now())) {
+      toast("Pick a reminder time that hasn't passed.");
+      at.focus();
+      return;
+    }
+    close();
+    sendChange(c, [{ op: "remind", at: when, ...(repeat.value ? { repeat: repeat.value } : {}) }]);
+  });
+  form.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  editor.append(form);
+  at.focus();
+}
+
 /** [c]'s place in the collection on view when it is kept there as a list, else null. */
 function listHere(c) {
   if (state.view.kind !== "collection") return null;
@@ -1443,7 +1621,7 @@ function listPanel(c) {
     tick.addEventListener("click", () => sendChange(c, [{ op: "line", index: l.index, text: l.text, value: !l.checked }], { quiet: true, redrawNow: true }));
     const words = document.createElement("span");
     words.className = "list-text";
-    words.textContent = l.text;
+    words.append(marked(l.text, searchWords(state.query)));
     li.append(tick, words);
     if (can) {
       const x = document.createElement("button");
@@ -1521,6 +1699,7 @@ function captureItems(c, { menu = false } = {}) {
       ...pin,
       { tool: true, label: c.archived ? "Unarchive" : "Archive", icon: "archive", key: "A", run: () => sendChange(c, [{ op: "archive", value: !c.archived }]) },
       { tool: true, label: "Collection", icon: "folderPlus", key: "L", run: () => openEditor(c, "collection") },
+      { tool: true, label: "Remind", icon: "bell", run: () => openReminder(c) },
     );
   }
   if (c.sourceUrl) items.push({ tool: true, label: "Open source", short: "Open", icon: "external", key: "O", href: c.sourceUrl, run: () => window.open(c.sourceUrl, "_blank", "noopener") });
@@ -1817,29 +1996,33 @@ function openEditor(c, field) {
 async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = false } = {}) {
   const change = { format: 1, id: crypto.randomUUID(), at: Date.now(), capture: c.id, ops };
   const before = snapshotCapture(c);
-  let relayId;
-  try {
-    relayId = await relay.send(opened.relayToken, await sealChange(opened.key, change));
-  } catch (e) {
-    toast(e.message ?? "That change could not be sent.");
-    return;
-  }
-  pendingEdits.set(change.id, { relayId, captureId: c.id, before, ops, at: change.at, collected: false });
-  // Shown at once; put back if the phone says otherwise.
-  if (ops.some((o) => o.op === "trash")) {
+  const trashing = ops.some((o) => o.op === "trash");
+  // Shown at once, before the relay has it: put back if it cannot be sent,
+  // or if the phone says otherwise.
+  if (trashing) {
     opened.manifest.captures = opened.manifest.captures.filter((x) => x.id !== c.id);
   } else {
     applyOpsHere(c, ops);
     c.pendingEdit = change.id;
   }
-  watchDelivery();
-  updateSync();
   // Quiet: no message (a list's tick is not worth one), drawn again only if asked.
-  if (quiet) {
-    if (redrawNow) redraw();
+  if (!quiet || redrawNow) redraw();
+  let relayId;
+  try {
+    relayId = await relay.send(opened.relayToken, await sealChange(opened.key, change));
+  } catch (e) {
+    Object.assign(c, before);
+    delete c.pendingEdit;
+    c._hay = undefined;
+    if (trashing && !opened.manifest.captures.includes(c)) opened.manifest.captures.push(c);
+    redraw();
+    toast(e.message ?? "That change could not be sent.");
     return;
   }
-  redraw();
+  pendingEdits.set(change.id, { relayId, captureId: c.id, before, ops, at: change.at, collected: false });
+  watchDelivery();
+  updateSync();
+  if (quiet) return;
   const back = undo ? null : inverseOps(ops, before);
   toast(undo ? "Undone" : "Queued for your phone", back ? { label: "Undo", run: () => sendChange(c, back, { undo: true }) } : null);
 }
@@ -1858,6 +2041,8 @@ function applyOpsHere(c, ops) {
       c.collections = c.collections.map((m) => (m.name.toLowerCase() === o.name.toLowerCase() ? { ...m, list: o.value, checked: o.value ? false : m.checked } : m));
       if (o.value) c.note = lines.linesFromPlain(c.note) || null;
     }
+    if (o.op === "remind") c.reminders = [...(c.reminders ?? []), { at: o.at, repeat: o.repeat ?? null }].sort((a, b) => a.at - b.at);
+    if (o.op === "unremind") c.reminders = (c.reminders ?? []).filter((r) => r.at !== o.at);
     if (o.op === "line") c.note = lines.tickLine(c.note, o.index, o.text, o.value) ?? c.note;
     if (o.op === "addline") {
       const count = lines.listLines(c.note).length;
@@ -1889,6 +2074,15 @@ function inverseOps(ops, before) {
     }
     if (o.op === "line") {
       back.push({ op: "line", index: o.index, text: o.text, value: !o.value });
+      continue;
+    }
+    if (o.op === "remind") {
+      back.push({ op: "unremind", at: o.at });
+      continue;
+    }
+    if (o.op === "unremind") {
+      const was = (before?.reminders ?? []).find((r) => r.at === o.at);
+      back.push({ op: "remind", at: o.at, ...(was?.repeat ? { repeat: was.repeat } : {}) });
       continue;
     }
     if (o.op === "addline") {
@@ -2131,6 +2325,7 @@ function mergeSent() {
       collections: (item.collections ?? []).map((m) => ({ name: m.name, checked: false, checklist: !!m.checklist, ...(m.name === item.pinIn ? { pinned: true } : {}) })),
       links: [],
       highlights: [],
+      reminders: item.remind ? [{ at: item.remind.at, repeat: item.remind.repeat ?? null }] : [],
     });
   }
   opened.manifest.captures.sort((a, b) => (b.capturedAt ?? 0) - (a.capturedAt ?? 0));
@@ -3348,6 +3543,7 @@ function rowFlags(c) {
     flags.append(f);
   };
   if (c.pendingEdit) flag("clock", "Queued for your phone");
+  if (c.reminders?.length) flag("bell", `Reminder: ${reminderWhen(c.reminders[0].at)}`);
   if (c.sent) flag(c.delivered ? "done" : "send", c.delivered ? "On your phone" : "Waiting for your phone");
   const pinnedHere = state.view.kind === "collection" &&
     c.collections.some((m) => m.pinned && m.name.toLowerCase() === state.view.name.toLowerCase());
@@ -3883,6 +4079,7 @@ function renderDetail(c) {
     d.append(chips);
   }
 
+  if (c.reminders?.length) d.append(remindersSection(c));
   if (c.collections.some((m) => m.list)) {
     d.append(listPanel(c));
   } else if (c.note) {
@@ -3896,9 +4093,9 @@ function renderDetail(c) {
     d.append(s);
   }
   if (c.summary) d.append(section("Summary", c.summary));
-  // A list made on the phone is saved as its name: no need to say it twice.
-  const isList = c.collections.some((m) => m.list);
-  if (c.text && !(isList && c.text.trim() === titleOf(c).trim())) d.append(section("Text", c.text));
+  // A capture that is only its title (an item typed into a list, a list's
+  // name) would say it twice.
+  if (c.text && c.text.trim() !== titleOf(c).trim()) d.append(section("Text", c.text));
   if (c.sourceUrl) {
     const s = section("Source", "");
     const card = document.createElement("a");
@@ -4109,7 +4306,7 @@ function snippet(c, max = 140, words = []) {
 }
 
 /** Where the open capture's words are marked, so a changed search can mark them again. */
-const MARKED = "h2, .prose, blockquote, .link-title, .link-url, .entity-value";
+const MARKED = "h2, .prose, blockquote, .link-title, .link-url, .entity-value, .list-text";
 
 /** Marks [words] afresh in what is already shown under [root], without building it again. */
 function remark(root, words) {

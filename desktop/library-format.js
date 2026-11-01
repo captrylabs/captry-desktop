@@ -317,6 +317,10 @@ export function decodeManifest(root) {
         quote: str(h?.quote),
         note: str(h?.note),
       })).filter((h) => h.quote),
+      // Reminders still to come, soonest first; the phone sends them from version 12.
+      reminders: (o.reminders ?? []).filter((r) => Number.isFinite(r?.at))
+        .map((r) => ({ at: r.at, repeat: str(r.repeat) }))
+        .sort((a, b) => a.at - b.at),
     });
   }
   captures.sort((a, b) => (b.capturedAt ?? 0) - (a.capturedAt ?? 0));
