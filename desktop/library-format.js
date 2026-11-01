@@ -106,6 +106,14 @@ export async function sealInbox(key, item, nonce = crypto.getRandomValues(new Ui
   const body = { format: INBOX_FORMAT, id: item.id, createdAt: item.createdAt };
   if (item.text) body.text = item.text;
   if (item.image) body.image = { mimeType: item.image.mimeType, data: toBase64(item.image.bytes) };
+  // What New capture's options asked for; each is left out when not set.
+  if (item.title) body.title = item.title;
+  if (item.note) body.note = item.note;
+  if (item.collections?.length) body.collections = item.collections.map((c) => (c.checklist ? { name: c.name, checklist: true } : { name: c.name }));
+  if (item.remind) body.remind = item.remind.repeat ? { at: item.remind.at, repeat: item.remind.repeat } : { at: item.remind.at };
+  if (item.pinned) body.pinned = true;
+  if (item.pinIn) body.pinIn = item.pinIn;
+  if (item.private) body.private = true;
   const plain = padded(new TextEncoder().encode(JSON.stringify(body)));
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: INBOX_MAGIC, tagLength: TAG_BITS }, key, plain),
@@ -134,6 +142,13 @@ export async function openInbox(key, bytes) {
       createdAt: body.createdAt,
       text: body.text ?? null,
       image: body.image ? { mimeType: body.image.mimeType, bytes: base64(body.image.data) } : null,
+      title: body.title ?? null,
+      note: body.note ?? null,
+      collections: (body.collections ?? []).map((c) => ({ name: c.name, checklist: !!c.checklist })),
+      remind: body.remind ? { at: body.remind.at, repeat: body.remind.repeat ?? null } : null,
+      pinned: !!body.pinned,
+      pinIn: body.pinIn ?? null,
+      private: !!body.private,
     };
   } catch (e) {
     return null;
@@ -294,7 +309,8 @@ export function decodeManifest(root) {
         .map((c) => (typeof c === "string"
           ? { name: str(c), checked: false, checklist: false }
           // The phone's colour for it, when the phone says (version 9 on).
-          : { name: str(c?.name), checked: !!c?.checked, checklist: !!c?.checklist, ...(Number.isInteger(c?.color) ? { color: c.color } : {}) }))
+          // Pinned at the top of this collection only, when it is.
+          : { name: str(c?.name), checked: !!c?.checked, checklist: !!c?.checklist, ...(Number.isInteger(c?.color) ? { color: c.color } : {}), ...(c?.pinned ? { pinned: true } : {}), ...(c?.list ? { list: true } : {}) }))
         .filter((c) => c.name),
       links: (o.links ?? []).map(str).filter(Boolean),
       highlights: (o.highlights ?? []).map((h) => ({

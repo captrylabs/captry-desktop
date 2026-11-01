@@ -160,11 +160,11 @@
     .again-hint { color: var(--muted); font-size: 14px; }
     button.button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    dialog#compose { width: min(560px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); color: var(--ink); }
+    /* Held near the top, so the options opening below never move the ones being clicked. */
+    dialog#compose { width: min(560px, calc(100vw - 32px)); margin: min(12vh, 96px) auto auto; padding: 0; border: 1px solid var(--line); border-radius: 16px; background: var(--paper); color: var(--ink); }
     dialog#compose::backdrop { background: rgba(8, 11, 31, 0.55); }
     dialog#compose form { display: flex; flex-direction: column; gap: 12px; padding: 20px; }
     dialog#compose h2 { margin: 0; font-size: 20px; font-weight: 650; }
-    #compose-text { width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--well); color: var(--ink); font: inherit; }
     .compose-head { display: flex; align-items: center; justify-content: space-between; }
     #compose-text { width: 100%; min-height: 140px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--well); color: var(--ink); font: inherit; font-size: 15px; line-height: 1.5; resize: vertical; }
     #compose-text:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
@@ -181,6 +181,23 @@
     .compose-note svg { flex: none; margin-top: 2px; }
     dialog#compose .hint { color: var(--muted); font-size: 13px; margin: 0; }
     dialog#compose .buttons { display: flex; gap: 8px; margin-left: auto; }
+    .compose-options { display: flex; flex-direction: column; gap: 10px; }
+    .compose-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 5px 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--well); }
+    .compose-chips:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    .compose-chips .cchip { height: 26px; background: var(--paper); }
+    .compose-chips .cchip-x { width: 20px; margin-left: 0; opacity: 1; }
+    #compose-collection { flex: 1 1 140px; min-width: 0; height: 26px; padding: 0 6px; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; }
+    #compose-collection:focus { outline: none; }
+    .compose-toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip-button.opt { display: inline-flex; align-items: center; gap: 6px; }
+    .chip-button.opt svg { flex: none; }
+    .compose-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+    .compose-row[hidden], .compose-fields[hidden] { display: none; }
+    .compose-presets { display: flex; gap: 6px; }
+    .compose-fields { display: flex; flex-direction: column; gap: 8px; }
+    .compose-field { padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--well); color: var(--ink); font: inherit; font-size: 14px; }
+    textarea.compose-field { resize: vertical; line-height: 1.45; }
+    .compose-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
     .button.ghost { background: transparent; }
     .button.ghost:hover { background: var(--well); }
 
@@ -230,6 +247,20 @@
     .tick { flex: none; display: grid; place-items: center; width: 34px; height: 34px; margin-top: 6px; border: 0; border-radius: 9px; background: none; color: var(--muted); cursor: pointer; }
     .tick svg, .cchip-tick svg { display: block; }
     .tick:hover { background: var(--well); color: var(--ink); }
+    .tick.list-mark, .tick.list-mark:hover { background: none; color: var(--accent); cursor: default; }
+    /* A list's lines, ticked in place in the detail. */
+    .list-panel h3 .list-count { margin-left: auto; font-weight: 600; letter-spacing: 0; text-transform: none; }
+    .list-lines { list-style: none; margin: 0 0 8px; padding: 0; }
+    .list-lines li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 4px 0 6px; border-radius: 10px; }
+    .list-lines li:hover { background: var(--well); }
+    .list-lines .list-tick { width: 24px; height: 24px; margin: 0; }
+    .list-lines .list-tick:disabled { cursor: default; }
+    .list-text { flex: 1; min-width: 0; font-size: 15px; overflow-wrap: anywhere; }
+    .list-lines li.done .list-text { color: var(--muted); text-decoration: line-through; }
+    .list-lines .list-x { width: 24px; margin: 0; opacity: 0; }
+    .list-lines li:hover .list-x, .list-lines .list-x:focus-visible { opacity: 1; }
+    .list-add { display: flex; gap: 8px; align-items: center; }
+    .list-add .editor-input { flex: 1; }
     .tick[aria-checked="true"] { color: var(--accent); }
     /* The capture's tools: one row of even buttons, the rest under More. */
     .toolbar { display: flex; flex-wrap: nowrap; gap: 6px; margin: 14px 0 4px; }
@@ -904,10 +935,45 @@
         <button id="compose-clear-image" class="compose-remove" type="button" aria-label="Remove image" title="Remove image"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
       <input id="compose-image" type="file" accept="image/*" hidden>
+      <div class="compose-options">
+        <div id="compose-chips" class="compose-chips">
+          <input id="compose-collection" type="text" maxlength="32" list="compose-collection-names" placeholder="Add to a collection" aria-label="Add to a collection" autocomplete="off">
+          <datalist id="compose-collection-names"></datalist>
+        </div>
+        <div class="compose-toggles" role="group" aria-label="Options">
+          <button id="compose-todo" class="chip-button opt" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>To-do</button>
+          <button id="compose-remind" class="chip-button opt" type="button" aria-pressed="false" aria-controls="compose-remind-row"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></svg>Remind</button>
+          <button id="compose-pin" class="chip-button opt" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3zM12 15v5"/></svg>Pin</button>
+          <button id="compose-private" class="chip-button opt" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3"/></svg>Private</button>
+          <button id="compose-more" class="chip-button opt" type="button" aria-pressed="false" aria-controls="compose-more-row"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg>Title and note</button>
+        </div>
+        <div id="compose-remind-row" class="compose-row" hidden>
+          <span class="compose-presets">
+            <button class="chip-button" type="button" data-when="tonight">Tonight</button>
+            <button class="chip-button" type="button" data-when="tomorrow">Tomorrow</button>
+            <button class="chip-button" type="button" data-when="week">Next week</button>
+          </span>
+          <input id="compose-remind-at" class="compose-field" type="datetime-local" aria-label="Remind at">
+          <select id="compose-repeat" class="compose-field" aria-label="Repeat">
+            <option value="">Once</option>
+            <option value="DAILY">Every day</option>
+            <option value="WEEKLY">Every week</option>
+            <option value="MONTHLY">Every month</option>
+          </select>
+        </div>
+        <div id="compose-pin-row" class="compose-row" hidden>
+          <label for="compose-pin-where">Pin</label>
+          <select id="compose-pin-where" class="compose-field"></select>
+        </div>
+        <div id="compose-more-row" class="compose-fields" hidden>
+          <input id="compose-title-input" class="compose-field" type="text" maxlength="200" placeholder="Title" aria-label="Title">
+          <textarea id="compose-note-input" class="compose-field" rows="2" placeholder="Note" aria-label="Note"></textarea>
+        </div>
+      </div>
       <div class="compose-foot">
         <p class="compose-note"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3"/></svg><span id="compose-note"></span></p>
         <div class="buttons">
-          <button id="compose-cancel" class="button ghost" type="button">Cancel</button>
+          <button id="compose-cancel" class="button ghost" type="button">Discard</button>
           <button id="compose-save" class="button primary" type="submit"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12l16-8-6 16-3-7z"/></svg>Send to phone</button>
         </div>
       </div>
@@ -935,15 +1001,16 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=44": "sha384-D1eopjS+ENW1X0n2Tp7QYzLjmk39t10w377sa83RGdxR0JwhGKCqUp38KxdoRolX",
-        "/desktop/library.js?v=44": "sha384-WOeKV2PWAm9/euK7c5Vem0UtSmU7M7TrEqaPDHWoQhjePvhzhlRCXXk50f4Wxfx6",
-        "/desktop/pair.js?v=44": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
-        "/desktop/relay.js?v=44": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=44": "sha384-888J5rS4pA6rVJMp1x+3EOB9aymXc9D2gxWsuBPOSQ+rdjMh7ghlaHpn1nOCDY1Q",
-        "/desktop/viewer.js?v=44": "sha384-Oi0V9xcfgBC3szKqNQ54NgC74pHEjOXFuDOG5MyIAFx0Vkx5vs0142QcZdBkgk38"
+        "/desktop/library-format.js?v=45": "sha384-v2fSxeTPWuueBTxdriTlYyL1r1xubwu4UIYpc3Oi7OKtX1AUG4eVkOlX2SXQkCB5",
+        "/desktop/library.js?v=45": "sha384-zR/gUhas73HoVH3Zydw91eQL7zxdpAwu+WaEa3QL+mXCJ3CBU1jz47DT20tEp5jE",
+        "/desktop/list-lines.js?v=45": "sha384-oGMbMRnjYetWClSa3LRiNYqdFYUUKcbrDUAZAfFvnJXnnl1bXPq4dGCm8SXa857n",
+        "/desktop/pair.js?v=45": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
+        "/desktop/relay.js?v=45": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=45": "sha384-888J5rS4pA6rVJMp1x+3EOB9aymXc9D2gxWsuBPOSQ+rdjMh7ghlaHpn1nOCDY1Q",
+        "/desktop/viewer.js?v=45": "sha384-c7Tpef1H7hejtLukbAqw/Iw7Bm3MHJ6LyNlSgEzNQfkkS6G0AN46AG4ly396PTWw"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=44" integrity="sha384-Oi0V9xcfgBC3szKqNQ54NgC74pHEjOXFuDOG5MyIAFx0Vkx5vs0142QcZdBkgk38"></script>
+  <script type="module" src="./viewer.js?v=45" integrity="sha384-c7Tpef1H7hejtLukbAqw/Iw7Bm3MHJ6LyNlSgEzNQfkkS6G0AN46AG4ly396PTWw"></script>
 </body>
 </html>

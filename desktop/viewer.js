@@ -8,7 +8,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=44";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=45";
 import {
   FILTERS,
   RANGES,
@@ -26,10 +26,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=44";
-import * as store from "./store.js?v=44";
-import * as relay from "./relay.js?v=44";
-import * as pair from "./pair.js?v=44";
+} from "./library.js?v=45";
+import * as lines from "./list-lines.js?v=45";
+import * as store from "./store.js?v=45";
+import * as relay from "./relay.js?v=45";
+import * as pair from "./pair.js?v=45";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -68,6 +69,7 @@ const ICONS = {
   send: "M4 12l16-8-6 16-3-7z",
   done: "M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM8 12l3 3 5-6",
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  refresh: "M4 12a8 8 0 0 1 13.7-5.7L20 8.5M20 3.5v5h-5M20 12a8 8 0 0 1-13.7 5.7L4 15.5M4 20.5v-5h5",
 };
 
 /** An icon as an element. The paths are fixed strings above, never data. */
@@ -141,6 +143,22 @@ const el = {
   composeX: $("compose-x"),
   composeSave: $("compose-save"),
   composeCancel: $("compose-cancel"),
+  composeChips: $("compose-chips"),
+  composeCollection: $("compose-collection"),
+  composeCollectionNames: $("compose-collection-names"),
+  composeTodo: $("compose-todo"),
+  composeRemind: $("compose-remind"),
+  composePin: $("compose-pin"),
+  composePrivate: $("compose-private"),
+  composeMore: $("compose-more"),
+  composeRemindRow: $("compose-remind-row"),
+  composeRemindAt: $("compose-remind-at"),
+  composeRepeat: $("compose-repeat"),
+  composePinRow: $("compose-pin-row"),
+  composePinWhere: $("compose-pin-where"),
+  composeMoreRow: $("compose-more-row"),
+  composeTitleInput: $("compose-title-input"),
+  composeNoteInput: $("compose-note-input"),
   toast: $("toast"),
   sync: $("sync"),
   syncText: $("sync-text"),
@@ -213,6 +231,7 @@ const state = {
 
 let shown = []; // the list as filtered and ordered
 let doneFrom = -1; // where a checklist's done items start in `shown`
+let listsTo = 0; // how many of `shown` are a collection's lists, at the top
 let rendered = 0; // how many of `shown` are on screen
 let byId = new Map();
 
@@ -495,6 +514,9 @@ function setTabTitle(c) {
 
 function closeOpened() {
   document.title = "Captry Desktop";
+  // A draft belongs to this pairing: nothing typed for one phone waits for another.
+  if (el.compose.open) el.compose.close();
+  resetCompose();
   flushToast();
   if (el.lightbox.open) el.lightbox.close();
   picked.clear();
@@ -579,6 +601,8 @@ async function sha256Hex(bytes) {
 // --- sending a capture to the phone ------------------------------------------
 
 let composeImage = null; // { mimeType, bytes, url }
+// The collections New capture adds it to: [{ name, checklist }].
+let composeCollections = [];
 
 el.newCapture.addEventListener("click", () => openCompose());
 
@@ -588,12 +612,12 @@ async function openCompose({ text = "", file = null } = {}) {
     toast("Pair with your phone first, then send captures from here.");
     return;
   }
-  if (el.compose.open) {
-    if (text) el.composeText.value = [el.composeText.value.trim(), text].filter(Boolean).join("\n");
-  } else {
-    el.composeText.value = text;
-    setComposeImage(null);
+  // Whatever was left in it last time is still there: a draft is only
+  // dropped by sending it or by Discard.
+  if (text) el.composeText.value = [el.composeText.value.trim(), text].filter(Boolean).join("\n");
+  if (!el.compose.open) {
     describeDestination();
+    renderComposeOptions();
     el.compose.showModal();
   }
   if (file) await takeImage(file);
@@ -683,7 +707,10 @@ if (bookmarklet) {
   });
 }
 
-el.composeCancel.addEventListener("click", () => el.compose.close());
+el.composeCancel.addEventListener("click", () => {
+  resetCompose();
+  el.compose.close();
+});
 
 function describeDestination() {
   el.composeNote.textContent = "End-to-end encrypted. Arrives when Captry opens on your phone.";
@@ -698,7 +725,9 @@ el.compose.addEventListener("dragleave", (event) => {
 });
 el.compose.addEventListener("drop", () => el.compose.classList.remove("dropping"));
 
-el.compose.addEventListener("close", () => setComposeImage(null));
+el.compose.addEventListener("close", () => {
+  if (composeHasContent()) toast("Draft kept");
+});
 el.composePick.addEventListener("click", () => el.composeImage.click());
 el.composeClearImage.addEventListener("click", () => setComposeImage(null));
 el.composeImage.addEventListener("change", async () => {
@@ -719,12 +748,190 @@ el.compose.addEventListener("drop", async (event) => {
   event.preventDefault();
   await takeImage(file);
 });
-el.composeText.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+// Ctrl+Enter sends from anywhere in the dialog. A plain Enter in a one-line
+// field does not: it adds a collection there, and does nothing elsewhere.
+el.compose.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.isComposing) return;
+  if (event.ctrlKey || event.metaKey) {
     event.preventDefault();
     el.composeSave.click();
+  } else if (event.target instanceof HTMLInputElement) {
+    event.preventDefault();
+    if (event.target === el.composeCollection) addComposeCollection(el.composeCollection.value);
   }
 });
+
+// --- New capture's options -------------------------------------------------------------
+
+const pressed = (b) => b.getAttribute("aria-pressed") === "true";
+
+/** Every collection the library shows, by name. */
+function knownCollections() {
+  const names = new Map();
+  for (const c of opened?.manifest.captures ?? []) for (const m of c.collections) names.set(m.name.toLowerCase(), m.name);
+  return [...names.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** The phone's to-do list: its starter checklist, under whatever spelling the library has. */
+function todoName() {
+  return knownCollections().find((n) => n.toLowerCase() === "to-do") ?? "To-do";
+}
+
+function addComposeCollection(raw) {
+  const name = raw.replace(/\s+/g, " ").trim().slice(0, 32);
+  el.composeCollection.value = "";
+  if (!name || composeCollections.some((c) => c.name.toLowerCase() === name.toLowerCase())) return;
+  const known = knownCollections().find((n) => n.toLowerCase() === name.toLowerCase());
+  composeCollections.push({ name: known ?? name, checklist: known ? isChecklist(known) : false });
+  renderComposeOptions();
+}
+
+function removeComposeCollection(name) {
+  composeCollections = composeCollections.filter((c) => c.name !== name);
+  renderComposeOptions();
+}
+
+el.composeCollection.addEventListener("input", (event) => {
+  const value = el.composeCollection.value;
+  // A comma ends a name, and so does picking one from the suggestions (not
+  // typing one out: "Home" may be on its way to "Homework").
+  if (value.includes(",")) value.split(",").forEach(addComposeCollection);
+  else if (!(event instanceof InputEvent) || event.inputType === "insertReplacementText") addComposeCollection(value);
+});
+el.composeCollection.addEventListener("keydown", (event) => {
+  if (event.key === "Backspace" && !el.composeCollection.value && composeCollections.length) {
+    removeComposeCollection(composeCollections.at(-1).name);
+  }
+});
+el.composeCollection.addEventListener("blur", () => addComposeCollection(el.composeCollection.value));
+el.composeChips.addEventListener("click", (event) => {
+  if (event.target === el.composeChips) el.composeCollection.focus();
+});
+
+el.composeTodo.addEventListener("click", () => {
+  const name = todoName();
+  if (composeCollections.some((c) => c.name.toLowerCase() === name.toLowerCase())) removeComposeCollection(name);
+  else {
+    composeCollections.push({ name, checklist: true });
+    renderComposeOptions();
+  }
+});
+
+for (const b of [el.composeRemind, el.composePin, el.composePrivate, el.composeMore]) {
+  b.addEventListener("click", () => {
+    b.setAttribute("aria-pressed", String(!pressed(b)));
+    if (b === el.composeRemind && pressed(b) && !el.composeRemindAt.value) el.composeRemindAt.value = localInput(presetTime("tomorrow"));
+    renderComposeOptions();
+    if (b === el.composeMore && pressed(b)) el.composeTitleInput.focus();
+  });
+}
+
+el.composeRemindRow.addEventListener("click", (event) => {
+  const when = event.target.closest("[data-when]")?.dataset.when;
+  if (when) el.composeRemindAt.value = localInput(presetTime(when));
+});
+
+/** The time a reminder preset means, from now. */
+function presetTime(when) {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  if (when === "tonight") d.setHours(20, 0);
+  else if (when === "tomorrow") {
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0);
+  } else {
+    // Next Monday, even on a Monday.
+    d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+    d.setHours(9, 0);
+  }
+  return d;
+}
+
+/** A date as a datetime-local field writes it, in local time. */
+function localInput(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Draws the chips, the toggles and the rows they open from the current state. */
+function renderComposeOptions() {
+  el.composeChips.querySelectorAll(".cchip").forEach((n) => n.remove());
+  for (const c of composeCollections) {
+    const chip = document.createElement("span");
+    chip.className = "cchip";
+    const name = document.createElement("span");
+    name.className = "cchip-name";
+    name.textContent = c.name;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "cchip-x";
+    x.setAttribute("aria-label", `Remove ${c.name}`);
+    x.append(icon("x", 13));
+    x.addEventListener("click", () => {
+      removeComposeCollection(c.name);
+      el.composeCollection.focus();
+    });
+    chip.append(collectionDot(c.name), name, x);
+    el.composeChips.insertBefore(chip, el.composeCollection);
+  }
+  el.composeCollection.placeholder = composeCollections.length ? "" : "Add to a collection";
+  const taken = new Set(composeCollections.map((c) => c.name.toLowerCase()));
+  el.composeCollectionNames.replaceChildren(...knownCollections().filter((n) => !taken.has(n.toLowerCase())).map((n) => option(n, n)));
+
+  el.composeTodo.setAttribute("aria-pressed", String(taken.has(todoName().toLowerCase())));
+  el.composeRemindRow.hidden = !pressed(el.composeRemind);
+  el.composeRemindRow.querySelector('[data-when="tonight"]').hidden = new Date().getHours() >= 19;
+  el.composeMoreRow.hidden = !pressed(el.composeMore);
+
+  // Pinned everywhere, or only in one of the collections it goes in.
+  const where = el.composePinWhere.value;
+  el.composePinWhere.replaceChildren(option("", "Everywhere"), ...composeCollections.map((c) => option(c.name, `Only in ${c.name}`)));
+  el.composePinWhere.value = composeCollections.some((c) => c.name === where) ? where : "";
+  el.composePinRow.hidden = !pressed(el.composePin) || !composeCollections.length;
+}
+
+function composeHasContent() {
+  return !!(el.composeText.value.trim() || composeImage || composeCollections.length || el.composeTitleInput.value.trim() ||
+    el.composeNoteInput.value.trim() || [el.composeRemind, el.composePin, el.composePrivate].some(pressed));
+}
+
+/** Empties New capture: after sending, on Discard, and when the pairing closes. */
+function resetCompose() {
+  el.composeText.value = "";
+  setComposeImage(null);
+  composeCollections = [];
+  el.composeCollection.value = "";
+  for (const b of [el.composeRemind, el.composePin, el.composePrivate, el.composeMore]) b.setAttribute("aria-pressed", "false");
+  el.composeRemindAt.value = "";
+  el.composeRepeat.value = "";
+  el.composePinWhere.value = "";
+  el.composeTitleInput.value = "";
+  el.composeNoteInput.value = "";
+  renderComposeOptions();
+}
+
+/** What the options ask for, or a reason they can't be sent as they are. */
+function composeChoices() {
+  addComposeCollection(el.composeCollection.value);
+  let remind = null;
+  if (pressed(el.composeRemind)) {
+    const at = el.composeRemindAt.value ? new Date(el.composeRemindAt.value).getTime() : NaN;
+    if (!(at > Date.now())) return { problem: "Pick a reminder time that hasn't passed.", focus: el.composeRemindAt };
+    remind = { at, repeat: el.composeRepeat.value || null };
+  }
+  const more = pressed(el.composeMore);
+  const pin = pressed(el.composePin);
+  const pinIn = pin && composeCollections.length ? el.composePinWhere.value || null : null;
+  return {
+    title: more ? el.composeTitleInput.value.trim() || null : null,
+    note: more ? el.composeNoteInput.value.trim() || null : null,
+    collections: composeCollections.map((c) => ({ ...c })),
+    remind,
+    pinned: pin && !pinIn,
+    pinIn,
+    private: pressed(el.composePrivate),
+  };
+}
 
 async function takeImage(file) {
   if (file.size > INBOX_MAX_BYTES) {
@@ -754,9 +961,15 @@ el.compose.addEventListener("submit", async (event) => {
     el.composeText.focus();
     return;
   }
+  const choices = composeChoices();
+  if (choices.problem) {
+    toast(choices.problem);
+    choices.focus.focus();
+    return;
+  }
   el.composeSave.disabled = true;
   try {
-    const item = { id: crypto.randomUUID(), createdAt: Date.now(), text: text || null, image: composeImage ? { mimeType: composeImage.mimeType, bytes: composeImage.bytes } : null };
+    const item = { id: crypto.randomUUID(), createdAt: Date.now(), text: text || null, image: composeImage ? { mimeType: composeImage.mimeType, bytes: composeImage.bytes } : null, ...choices };
     let relayId;
     try {
       relayId = await relay.send(opened.relayToken, await sealInbox(opened.key, item));
@@ -775,9 +988,11 @@ el.compose.addEventListener("submit", async (event) => {
       image: composeImage ? composeImage.blob : null,
       mimeType: composeImage?.mimeType ?? null,
       imageHash: composeImage ? await sha256Hex(composeImage.bytes) : null,
+      ...choices,
     };
     sentItems.push(record);
     await saveSent(record);
+    resetCompose();
     el.compose.close();
     mergeSent();
     renderNav();
@@ -1181,6 +1396,95 @@ function tickButton(c, name, className) {
   return b;
 }
 
+/** [c]'s place in the collection on view when it is kept there as a list, else null. */
+function listHere(c) {
+  if (state.view.kind !== "collection") return null;
+  return c.collections.find((m) => m.list && m.name.toLowerCase() === state.view.name.toLowerCase()) ?? null;
+}
+
+/** "5 of 12 left", the way a list says how it stands. */
+function listCount(c) {
+  const all = lines.listLines(c.note);
+  const left = all.filter((l) => !l.checked).length;
+  return !all.length ? "No items yet" : left ? `${left} of ${all.length} left` : "All done";
+}
+
+/**
+ * A list's lines, to tick in place, take off, add to and reset. Read-only
+ * when [c] can't be changed from here.
+ */
+function listPanel(c) {
+  const box = document.createElement("section");
+  box.className = "list-panel";
+  const head = document.createElement("h3");
+  head.append("List");
+  const count = document.createElement("span");
+  count.className = "list-count";
+  count.textContent = listCount(c);
+  head.append(count);
+  box.append(head);
+  const all = lines.listLines(c.note);
+  const can = editable(c);
+  const ul = document.createElement("ul");
+  ul.className = "list-lines";
+  for (const l of [...all.filter((x) => !x.checked), ...all.filter((x) => x.checked)]) {
+    const li = document.createElement("li");
+    li.className = l.checked ? "done" : "";
+    const tick = document.createElement("button");
+    tick.type = "button";
+    tick.className = "cchip-tick list-tick";
+    tick.setAttribute("role", "checkbox");
+    tick.setAttribute("aria-checked", String(l.checked));
+    tick.setAttribute("aria-label", `${l.checked ? "Untick" : "Tick"} ${l.text}`);
+    tick.innerHTML = l.checked
+      ? `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" fill="currentColor"/><path d="M7.5 12.5l3 3 6-6.5" fill="none" stroke="var(--accent-ink, #fff)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+    tick.disabled = !can;
+    tick.addEventListener("click", () => sendChange(c, [{ op: "line", index: l.index, text: l.text, value: !l.checked }], { quiet: true, redrawNow: true }));
+    const words = document.createElement("span");
+    words.className = "list-text";
+    words.textContent = l.text;
+    li.append(tick, words);
+    if (can) {
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "cchip-x list-x";
+      x.append(icon("x", 13));
+      x.setAttribute("aria-label", `Take ${l.text} off the list`);
+      x.title = "Take it off the list";
+      x.addEventListener("click", () => sendChange(c, [{ op: "removeline", index: l.index, text: l.text }]));
+      li.append(x);
+    }
+    ul.append(li);
+  }
+  box.append(ul);
+  if (can) {
+    const form = document.createElement("form");
+    form.className = "list-add";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "editor-input";
+    input.placeholder = "Add to the list";
+    input.setAttribute("aria-label", "Add to the list");
+    form.append(input);
+    if (all.some((l) => l.checked)) {
+      const reset = makeTool(all.every((l) => l.checked) ? "Reset for next time" : "Reset", "refresh", () => sendChange(c, [{ op: "reset" }]));
+      form.append(reset);
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      // The panel is drawn again with the new line; the field there takes the focus back.
+      sendChange(c, [{ op: "addline", text }], { quiet: true, redrawNow: true })
+        .then(() => el.detail.querySelector(".list-add input")?.focus());
+    });
+    box.append(form);
+  }
+  return box;
+}
+
 function editable(c) {
   return !!(opened?.relayToken && opened.key && !c.sent && !c.private);
 }
@@ -1204,19 +1508,29 @@ function makeTool(label, iconName, onClick, key, extra) {
  * What can be done to [c], in order. Those marked tool are the toolbar's
  * buttons; the rest are in its More menu. A null is a line in a menu.
  */
-function captureItems(c) {
+function captureItems(c, { menu = false } = {}) {
   const items = [];
   if (editable(c)) {
+    // In a collection, Pin asks where; a right-click menu lists the choices in place.
+    const pin = menu && c.collections.length
+      ? [null, ...pinItems(c), null]
+      : [{ tool: true, pin: true, label: !c.collections.length && c.pinned ? "Unpin" : "Pin", icon: "pin", key: "P", on: pinnedSomewhere(c), run: (event) => choosePin(c, event?.currentTarget) }];
     items.push(
       { tool: true, label: "Rename", icon: "pencil", key: "R", run: () => openEditor(c, "title") },
       { tool: true, label: c.note ? "Edit note" : "Note", icon: "note", key: "E", run: () => openEditor(c, "note") },
-      { tool: true, label: c.pinned ? "Unpin" : "Pin", icon: "pin", key: "P", on: c.pinned, run: () => sendChange(c, [{ op: "pin", value: !c.pinned }]) },
+      ...pin,
       { tool: true, label: c.archived ? "Unarchive" : "Archive", icon: "archive", key: "A", run: () => sendChange(c, [{ op: "archive", value: !c.archived }]) },
       { tool: true, label: "Collection", icon: "folderPlus", key: "L", run: () => openEditor(c, "collection") },
     );
   }
   if (c.sourceUrl) items.push({ tool: true, label: "Open source", short: "Open", icon: "external", key: "O", href: c.sourceUrl, run: () => window.open(c.sourceUrl, "_blank", "noopener") });
   items.push(null);
+  const inView = state.view.kind === "collection" && c.collections.find((m) => m.name.toLowerCase() === state.view.name.toLowerCase());
+  if (editable(c) && inView && isChecklist(inView.name)) {
+    items.push(inView.list
+      ? { label: "Make it an item", icon: "check", run: () => sendChange(c, [{ op: "list", name: inView.name, value: false }]) }
+      : { label: "Make it a list", icon: "lines", run: () => sendChange(c, [{ op: "list", name: inView.name, value: true }]) }, null);
+  }
   const body = bodyText(c);
   if (body) items.push({ label: "Copy text", icon: "copy", key: "C", run: () => copyNow(body, "Copied the text") });
   items.push({ label: "Copy as Markdown", icon: "markdown", key: "M", run: () => copyNow(markdownOf(c), "Copied as Markdown") });
@@ -1244,6 +1558,41 @@ function toolFrom(it) {
   node.dataset.fold = "";
   node.menuItem = it;
   return node;
+}
+
+function pinnedSomewhere(c) {
+  return c.pinned || c.collections.some((m) => m.pinned);
+}
+
+/**
+ * Pin's choices: everywhere, and only in each collection it is in. Seen in
+ * one of those collections, that one comes first.
+ */
+function pinItems(c) {
+  const here = state.view.kind === "collection" ? state.view.name.toLowerCase() : null;
+  const inHere = (m) => m.name.toLowerCase() === here;
+  const only = (m) => ({
+    label: m.pinned ? `Unpin in ${m.name}` : `Pin only in ${m.name}`,
+    icon: "pin",
+    run: () => sendChange(c, [{ op: "pin", value: !m.pinned, collection: m.name }]),
+  });
+  const everywhere = { label: c.pinned ? "Unpin everywhere" : "Pin everywhere", icon: "pin", run: () => sendChange(c, [{ op: "pin", value: !c.pinned }]) };
+  return [...c.collections.filter(inHere).map(only), everywhere, ...c.collections.filter((m) => !inHere(m)).map(only)];
+}
+
+// Where the pointer last went down, for a menu asked for from inside another one.
+let lastPointer = { x: innerWidth / 2, y: innerHeight / 3 };
+document.addEventListener("pointerdown", (event) => { lastPointer = { x: event.clientX, y: event.clientY }; }, true);
+
+/** Pin, or the choice of where when [c] is in a collection: under [anchor], or where the pointer was. */
+function choosePin(c, anchor) {
+  if (!c.collections.length) {
+    sendChange(c, [{ op: "pin", value: !c.pinned }]);
+    return;
+  }
+  const box = anchor?.getBoundingClientRect?.();
+  if (box?.width) contextMenu(box.left, box.bottom + 4, pinItems(c));
+  else contextMenu(lastPointer.x, lastPointer.y, pinItems(c));
 }
 
 /** A toolbar from [items]: their tools in a row, then More with the rest. */
@@ -1465,7 +1814,7 @@ function openEditor(c, field) {
   input.focus();
 }
 
-async function sendChange(c, ops, { quiet = false, undo = false } = {}) {
+async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = false } = {}) {
   const change = { format: 1, id: crypto.randomUUID(), at: Date.now(), capture: c.id, ops };
   const before = snapshotCapture(c);
   let relayId;
@@ -1485,9 +1834,13 @@ async function sendChange(c, ops, { quiet = false, undo = false } = {}) {
   }
   watchDelivery();
   updateSync();
-  if (quiet) return;
+  // Quiet: no message (a list's tick is not worth one), drawn again only if asked.
+  if (quiet) {
+    if (redrawNow) redraw();
+    return;
+  }
   redraw();
-  const back = undo ? null : inverseOps(ops);
+  const back = undo ? null : inverseOps(ops, before);
   toast(undo ? "Undone" : "Queued for your phone", back ? { label: "Undo", run: () => sendChange(c, back, { undo: true }) } : null);
 }
 
@@ -1496,8 +1849,23 @@ function applyOpsHere(c, ops) {
   for (const o of ops) {
     if (o.op === "title") c.title = o.to;
     if (o.op === "note") c.note = o.to;
-    if (o.op === "pin") c.pinned = o.value;
+    if (o.op === "pin" && !o.collection) c.pinned = o.value;
+    if (o.op === "pin" && o.collection) {
+      c.collections = c.collections.map((m) => (m.name.toLowerCase() === o.collection.toLowerCase() ? { ...m, pinned: o.value } : m));
+    }
     if (o.op === "archive") c.archived = o.value;
+    if (o.op === "list") {
+      c.collections = c.collections.map((m) => (m.name.toLowerCase() === o.name.toLowerCase() ? { ...m, list: o.value, checked: o.value ? false : m.checked } : m));
+      if (o.value) c.note = lines.linesFromPlain(c.note) || null;
+    }
+    if (o.op === "line") c.note = lines.tickLine(c.note, o.index, o.text, o.value) ?? c.note;
+    if (o.op === "addline") {
+      const count = lines.listLines(c.note).length;
+      const added = lines.addLine(c.note, o.text, o.index ?? count);
+      c.note = (o.value ? lines.tickLine(added, o.index ?? count, o.text.replace(/\s+/g, " ").trim(), true) : added) || null;
+    }
+    if (o.op === "removeline") c.note = lines.removeLine(c.note, o.index, o.text) ?? c.note;
+    if (o.op === "reset") c.note = lines.resetLines(c.note);
     if (o.op === "check") {
       c.collections = c.collections.map((m) => (m.name.toLowerCase() === o.name.toLowerCase() ? { ...m, checked: o.value } : m));
     }
@@ -1511,11 +1879,35 @@ function applyOpsHere(c, ops) {
   c._hay = undefined;
 }
 
-/** The change that puts [ops] back, or null when there is none to send. */
-function inverseOps(ops) {
+/** The change that puts [ops] back, or null when there is none to send. [before] is [c] as it was. */
+function inverseOps(ops, before) {
   const back = [];
   for (const o of ops) {
-    if (o.op === "pin" || o.op === "archive") back.push({ op: o.op, value: !o.value });
+    if (o.op === "list") {
+      back.push({ op: "list", name: o.name, value: !o.value });
+      continue;
+    }
+    if (o.op === "line") {
+      back.push({ op: "line", index: o.index, text: o.text, value: !o.value });
+      continue;
+    }
+    if (o.op === "addline") {
+      back.push({ op: "removeline", index: o.index ?? lines.listLines(before?.note).length, text: o.text.replace(/\s+/g, " ").trim() });
+      continue;
+    }
+    if (o.op === "removeline") {
+      const all = lines.listLines(before?.note);
+      const gone = all.find((l) => l.index === o.index && l.text === o.text.trim()) ?? all.find((l) => l.text === o.text.trim());
+      if (!gone) return null;
+      back.push({ op: "addline", text: gone.text, index: gone.index, value: gone.checked });
+      continue;
+    }
+    if (o.op === "reset") {
+      for (const l of lines.listLines(before?.note)) if (l.checked) back.push({ op: "line", index: l.index, text: l.text, value: true });
+      continue;
+    }
+    if (o.op === "pin" && o.collection) back.push({ op: "pin", value: !o.value, collection: o.collection });
+    else if (o.op === "pin" || o.op === "archive") back.push({ op: o.op, value: !o.value });
     else if (o.op === "check") back.push({ op: "check", name: o.name, value: !o.value });
     else if (o.op === "collection") back.push({ op: "collection", name: o.name, add: !o.add });
     else if (o.op === "title" || o.op === "note") back.push({ op: o.op, from: o.to, to: o.from });
@@ -1726,17 +2118,17 @@ function mergeSent() {
       sourceUrl: url,
       sourceHost: null,
       text: item.text,
-      title: null,
+      title: item.title ?? null,
       summary: null,
-      note: null,
+      note: item.note ?? null,
       capturedAt: item.createdAt,
       createdAt: item.createdAt,
-      pinned: false,
+      pinned: !!item.pinned,
       archived: false,
-      private: false,
+      private: !!item.private,
       entities: [],
       files: item.image ? [{ file: "sent:" + item.id, type: "IMAGE", mimeType: item.mimeType, blob: item.image }] : [],
-      collections: [],
+      collections: (item.collections ?? []).map((m) => ({ name: m.name, checked: false, checklist: !!m.checklist, ...(m.name === item.pinIn ? { pinned: true } : {}) })),
       links: [],
       highlights: [],
     });
@@ -2009,7 +2401,7 @@ window.addEventListener("hashchange", () => {
 
 function refresh({ keepSelection = false } = {}) {
   const now = Date.now();
-  ({ list: shown, doneFrom } = query(opened.manifest, state, now));
+  ({ list: shown, doneFrom, listsTo } = query(opened.manifest, state, now));
 
   el.viewTitle.textContent = viewTitle(state.view, opened.manifest);
   const smart = state.view.kind === "smart"
@@ -2066,7 +2458,7 @@ function renderMore() {
   const now = Date.now();
   // How many under each heading, over the whole list, not just this page of it.
   const groupCounts = new Map();
-  if (dated && doneFrom < 0) for (const x of shown) {
+  if (dated && doneFrom < 0 && !listsTo) for (const x of shown) {
     const g = dateGroup(x.capturedAt, now);
     groupCounts.set(g, (groupCounts.get(g) ?? 0) + 1);
   }
@@ -2074,10 +2466,15 @@ function renderMore() {
 
   slice.forEach((c, i) => {
     const index = from + i;
+    if (listsTo && index === 0) {
+      frag.append(heading("Lists", listsTo));
+    } else if (listsTo && index === listsTo && index !== doneFrom) {
+      frag.append(heading("Items", (doneFrom >= 0 ? doneFrom : shown.length) - listsTo));
+    }
     if (index === doneFrom) {
       frag.append(heading("Done", shown.length - doneFrom));
       lastGroup = null;
-    } else if (dated && doneFrom < 0) {
+    } else if (dated && doneFrom < 0 && !listsTo) {
       const group = dateGroup(c.capturedAt, now);
       if (group !== lastGroup) {
         frag.append(heading(group, groupCounts.get(group)));
@@ -2088,7 +2485,15 @@ function renderMore() {
     if (state.layout !== "grid" && state.view.kind === "collection" && isChecklist(state.view.name) && editable(c)) {
       const line = document.createElement("div");
       line.className = "row-line";
-      line.append(tickButton(c, state.view.name, "tick"), row(c, done));
+      // A list has no box of its own: it is never done.
+      if (listHere(c)) {
+        const mark = document.createElement("span");
+        mark.className = "tick list-mark";
+        mark.append(icon("lines", 18));
+        line.append(mark, row(c, false));
+      } else {
+        line.append(tickButton(c, state.view.name, "tick"), row(c, done));
+      }
       frag.append(line);
     } else {
       frag.append(state.layout === "grid" ? card(c) : row(c, done));
@@ -2121,13 +2526,15 @@ function row(c, done) {
   const meta = document.createElement("div");
   meta.className = "row-meta";
   const voice = c.files.find((f) => f.type === "AUDIO" || f.mimeType?.startsWith("audio/"));
-  meta.textContent = [shortWhen(c.capturedAt), voice ? formatDuration(voice.durationMs) : "", c.title && !voice ? typeName(c.type) : "", c.sourceHost ?? sourceLabel(c.sourceApp)]
-    .filter(Boolean)
-    .join(" · ");
+  meta.textContent = listHere(c)
+    ? listCount(c)
+    : [shortWhen(c.capturedAt), voice ? formatDuration(voice.durationMs) : "", c.title && !voice ? typeName(c.type) : "", c.sourceHost ?? sourceLabel(c.sourceApp)]
+      .filter(Boolean)
+      .join(" · ");
   const picture = c.files.find(isImage);
   b.append(picture ? thumb(picture, "row-thumb") : kindTile(c));
   text.append(title, meta);
-  const s = snippet(c, 140, words);
+  const s = listHere(c) ? null : snippet(c, 140, words);
   if (s) {
     const snip = document.createElement("div");
     snip.className = "row-snippet";
@@ -2304,7 +2711,7 @@ el.list.addEventListener("contextmenu", (event) => {
     picked.clear();
     select(c, { scroll: false });
   }
-  show(captureItems(c));
+  show(captureItems(c, { menu: true }));
 });
 
 function renderBulk() {
@@ -2507,7 +2914,7 @@ function shortcut(event) {
       return true;
     case "p":
       if (one) {
-        if (canChange(one)) sendChange(one, [{ op: "pin", value: !one.pinned }]);
+        if (canChange(one)) choosePin(one, [...el.detail.querySelectorAll(".tool")].find((n) => n.menuItem?.pin && !n.hidden));
       } else bulkToggle("pin");
       return true;
     case "a":
@@ -2942,7 +3349,9 @@ function rowFlags(c) {
   };
   if (c.pendingEdit) flag("clock", "Queued for your phone");
   if (c.sent) flag(c.delivered ? "done" : "send", c.delivered ? "On your phone" : "Waiting for your phone");
-  if (c.pinned && state.view.kind !== "pinned") flag("pin", "Pinned", "pinned");
+  const pinnedHere = state.view.kind === "collection" &&
+    c.collections.some((m) => m.pinned && m.name.toLowerCase() === state.view.name.toLowerCase());
+  if ((c.pinned && state.view.kind !== "pinned") || pinnedHere) flag("pin", c.pinned ? "Pinned" : "Pinned here", "pinned");
   return flags;
 }
 
@@ -3413,6 +3822,7 @@ function renderDetail(c) {
   const source = c.sourceApp || c.sourceHost;
   if (source && !c.private && !c.sent) chip(sourceLabel(source), c.sourceUrl ? "link" : "inbox", { kind: "source", source });
   if (c.pinned) chip("Pinned", "pin", null, "accent");
+  for (const m of c.collections) if (m.pinned) chip(`Pinned in ${m.name}`, "pin", { kind: "collection", name: m.name });
   if (c.archived) chip("Archived", "archive");
   if (c.private) chip("Private", "lock");
   d.append(meta);
@@ -3451,7 +3861,8 @@ function renderDetail(c) {
     for (const m of c.collections) {
       const chip = document.createElement("span");
       chip.className = "cchip" + (m.checked ? " done" : "") + (editable(c) ? "" : " plain");
-      if (editable(c) && isChecklist(m.name)) chip.append(tickButton(c, m.name, "cchip-tick"));
+      // A list has no box: it is never done in that collection.
+      if (editable(c) && isChecklist(m.name) && !m.list) chip.append(tickButton(c, m.name, "cchip-tick"));
       else chip.append(collectionDot(m.name));
       const name = viewLink(m.name, { kind: "collection", name: m.name });
       name.className = "cchip-name";
@@ -3472,7 +3883,9 @@ function renderDetail(c) {
     d.append(chips);
   }
 
-  if (c.note) {
+  if (c.collections.some((m) => m.list)) {
+    d.append(listPanel(c));
+  } else if (c.note) {
     const s = section("Your note", c.note);
     s.classList.add("note-section");
     if (editable(c)) {
@@ -3483,7 +3896,9 @@ function renderDetail(c) {
     d.append(s);
   }
   if (c.summary) d.append(section("Summary", c.summary));
-  if (c.text) d.append(section("Text", c.text));
+  // A list made on the phone is saved as its name: no need to say it twice.
+  const isList = c.collections.some((m) => m.list);
+  if (c.text && !(isList && c.text.trim() === titleOf(c).trim())) d.append(section("Text", c.text));
   if (c.sourceUrl) {
     const s = section("Source", "");
     const card = document.createElement("a");

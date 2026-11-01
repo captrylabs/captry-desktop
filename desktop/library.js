@@ -283,8 +283,14 @@ export function describeRule(rule) {
  */
 export function inView(c, view, data, now) {
   // Sent from this page and not yet in the library: only where a person would
-  // look for something they just made.
-  if (c.sent) return view.kind === "captures" || view.kind === "sent";
+  // look for something they just made, and where they sent it.
+  if (c.sent) {
+    if (view.kind === "sent") return true;
+    if (c.private) return view.kind === "private";
+    if (view.kind === "pinned") return c.pinned;
+    if (view.kind === "collection") return c.collections.some((m) => m.name === view.name);
+    return view.kind === "captures";
+  }
   if (view.kind === "sent") return false;
   switch (view.kind) {
     case "captures":
@@ -371,14 +377,25 @@ export function query(data, state, now) {
   );
   sortCaptures(list, state.sort);
 
-  // A checklist collection keeps its done items at the end, as the shelf does.
+  // A checklist collection keeps its done items at the end, as the shelf does,
+  // what is pinned in this collection only at the top of the open ones, and
+  // its lists (never done) above all of them, by name.
   if (state.view.kind === "collection") {
-    const done = (c) => c.collections.find((m) => m.name === state.view.name)?.checked ?? false;
-    const open = list.filter((c) => !done(c));
-    const finished = list.filter(done);
-    return { list: open.concat(finished), doneFrom: finished.length ? open.length : -1 };
+    const here = (c) => c.collections.find((m) => m.name === state.view.name);
+    const lists = list.filter((c) => here(c)?.list)
+      .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }));
+    const items = list.filter((c) => !here(c)?.list);
+    const done = (c) => here(c)?.checked ?? false;
+    const open = items.filter((c) => !done(c));
+    const pinned = open.filter((c) => here(c)?.pinned);
+    const finished = items.filter(done);
+    return {
+      list: lists.concat(pinned, open.filter((c) => !here(c)?.pinned), finished),
+      doneFrom: finished.length ? lists.length + open.length : -1,
+      listsTo: lists.length,
+    };
   }
-  return { list, doneFrom: -1 };
+  return { list, doneFrom: -1, listsTo: 0 };
 }
 
 export function sortCaptures(list, sort) {
