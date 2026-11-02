@@ -15,7 +15,7 @@
 # what holds the page to that, not the code.
 /desktop/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-NKdFoS7NlT2dd/2hDV7v5cGhNE0lFWF/imCklDJER+I='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-XApUinCNXf5mwh8VFr/OLfLLJkWYyRv4aINGqREf5oA='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   ! X-Robots-Tag
   X-Robots-Tag: noindex
 

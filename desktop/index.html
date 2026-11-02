@@ -259,6 +259,13 @@
     .list-lines li.done .list-text { color: var(--muted); text-decoration: line-through; }
     .list-lines .list-x { width: 24px; margin: 0; opacity: 0; }
     .list-lines li:hover .list-x, .list-lines .list-x:focus-visible { opacity: 1; }
+    .list-lines .list-grip { display: grid; place-items: center; width: 20px; height: 28px; margin: 0 -4px 0 -2px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: grab; opacity: 0; }
+    .list-lines li:hover .list-grip, .list-lines .list-grip:focus-visible { opacity: 1; }
+    .list-lines span.list-grip { cursor: default; }
+    .list-lines li.dragging { opacity: .45; }
+    .list-lines li.drop-target { box-shadow: inset 0 2px 0 var(--accent); }
+    .list-lines .list-rename { flex: 1; min-width: 0; height: 32px; font-size: 15px; }
+    @media (hover: none) { .list-lines .list-grip, .list-lines .list-x { opacity: 1; } }
     .list-add { display: flex; gap: 8px; align-items: center; }
     .list-add .editor-input { flex: 1; }
     /* Reminders still to come, and setting one. */
@@ -1015,16 +1022,16 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=46": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=46": "sha384-zR/gUhas73HoVH3Zydw91eQL7zxdpAwu+WaEa3QL+mXCJ3CBU1jz47DT20tEp5jE",
-        "/desktop/list-lines.js?v=46": "sha384-oGMbMRnjYetWClSa3LRiNYqdFYUUKcbrDUAZAfFvnJXnnl1bXPq4dGCm8SXa857n",
-        "/desktop/pair.js?v=46": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
-        "/desktop/relay.js?v=46": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=46": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=46": "sha384-kOFftIqbLHJ0H4bdgYaK790sheuz1bPtG+975g1QsrY99/uKZPpQj1v5CrNsgerI"
+        "/desktop/library-format.js?v=47": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=47": "sha384-zR/gUhas73HoVH3Zydw91eQL7zxdpAwu+WaEa3QL+mXCJ3CBU1jz47DT20tEp5jE",
+        "/desktop/list-lines.js?v=47": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=47": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
+        "/desktop/relay.js?v=47": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=47": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=47": "sha384-QaXkZVJ2PZn/Cgww31f68358ZC5GPH3cgvDlbM+bT1pvhE/uvmnlrQFh5Fualfsv"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=46" integrity="sha384-kOFftIqbLHJ0H4bdgYaK790sheuz1bPtG+975g1QsrY99/uKZPpQj1v5CrNsgerI"></script>
+  <script type="module" src="./viewer.js?v=47" integrity="sha384-QaXkZVJ2PZn/Cgww31f68358ZC5GPH3cgvDlbM+bT1pvhE/uvmnlrQFh5Fualfsv"></script>
 </body>
 </html>

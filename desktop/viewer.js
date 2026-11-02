@@ -8,7 +8,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=46";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=47";
 import {
   FILTERS,
   RANGES,
@@ -26,11 +26,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=46";
-import * as lines from "./list-lines.js?v=46";
-import * as store from "./store.js?v=46";
-import * as relay from "./relay.js?v=46";
-import * as pair from "./pair.js?v=46";
+} from "./library.js?v=47";
+import * as lines from "./list-lines.js?v=47";
+import * as store from "./store.js?v=47";
+import * as relay from "./relay.js?v=47";
+import * as pair from "./pair.js?v=47";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -70,13 +70,14 @@ const ICONS = {
   done: "M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM8 12l3 3 5-6",
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
   refresh: "M4 12a8 8 0 0 1 13.7-5.7L20 8.5M20 3.5v5h-5M20 12a8 8 0 0 1-13.7 5.7L4 15.5M4 20.5v-5h5",
+  grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
 };
 
 /** An icon as an element. The paths are fixed strings above, never data. */
 function icon(name, size = 16) {
   const span = document.createElement("span");
   span.style.display = "contents";
-  span.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${name === "more" ? 3 : 1.9}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${name === "more" || name === "grip" ? 3 : 1.9}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
   return span.firstChild;
 }
 
@@ -1624,6 +1625,62 @@ function listPanel(c) {
     words.append(marked(l.text, searchWords(state.query)));
     li.append(tick, words);
     if (can) {
+      // A double-click changes the words; Enter keeps them, Escape doesn't.
+      words.title = "Double-click to change";
+      words.addEventListener("dblclick", () => renameInPlace(c, l, words));
+    }
+    if (can && !l.checked) {
+      // Open lines move by their grip, dragged or with the arrow keys.
+      const grip = document.createElement("button");
+      grip.type = "button";
+      grip.className = "list-grip";
+      grip.append(icon("grip", 14));
+      grip.setAttribute("aria-label", `Move ${l.text}. Up or down arrow to move it.`);
+      grip.title = "Drag to move";
+      grip.draggable = true;
+      grip.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData(LINE_DRAG, String(l.index));
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setDragImage(li, 12, 12);
+        li.classList.add("dragging");
+      });
+      grip.addEventListener("dragend", () => li.classList.remove("dragging"));
+      grip.addEventListener("keydown", (event) => {
+        const open = all.filter((x) => !x.checked);
+        const here = open.indexOf(l);
+        const to = event.key === "ArrowUp" ? open[here - 1] : event.key === "ArrowDown" ? open[here + 1] : null;
+        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          // Not the page's own arrows, which go to the next capture.
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        if (!to) return;
+        sendChange(c, [{ op: "moveline", index: l.index, text: l.text, to: to.index }], { quiet: true, redrawNow: true })
+          .then(() => el.detail.querySelectorAll(".list-grip")[here + (event.key === "ArrowUp" ? -1 : 1)]?.focus());
+      });
+      li.addEventListener("dragover", (event) => {
+        if (![...event.dataTransfer.types].includes(LINE_DRAG)) return;
+        event.preventDefault();
+        li.classList.add("drop-target");
+      });
+      li.addEventListener("dragleave", () => li.classList.remove("drop-target"));
+      li.addEventListener("drop", (event) => {
+        li.classList.remove("drop-target");
+        const from = all[Number(event.dataTransfer.getData(LINE_DRAG))];
+        if (!from || from === l) return;
+        event.preventDefault();
+        event.stopPropagation();
+        sendChange(c, [{ op: "moveline", index: from.index, text: from.text, to: l.index }], { quiet: true, redrawNow: true });
+      });
+      li.prepend(grip);
+    } else if (can) {
+      // The grip's room kept, so a ticked line's box lines up with the open ones.
+      const room = document.createElement("span");
+      room.className = "list-grip";
+      room.setAttribute("aria-hidden", "true");
+      li.prepend(room);
+    }
+    if (can) {
       const x = document.createElement("button");
       x.type = "button";
       x.className = "cchip-x list-x";
@@ -1661,6 +1718,37 @@ function listPanel(c) {
     box.append(form);
   }
   return box;
+}
+
+/** A list line being dragged by its grip. Its own type, so the page's drop-to-capture leaves it alone. */
+const LINE_DRAG = "application/x-captry-line";
+
+/** The line's words as a field in place: Enter or leaving it keeps them, Escape puts them back. */
+function renameInPlace(c, l, words) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "editor-input list-rename";
+  input.value = l.text;
+  input.setAttribute("aria-label", `Change ${l.text}`);
+  let done = false;
+  const finish = (keep) => {
+    if (done) return;
+    done = true;
+    const to = input.value.replace(/\s+/g, " ").trim();
+    if (keep && to && to !== l.text) {
+      sendChange(c, [{ op: "renameline", index: l.index, text: l.text, to }], { quiet: true, redrawNow: true });
+    } else {
+      input.replaceWith(words);
+    }
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); finish(true); }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+  words.replaceWith(input);
+  input.focus();
+  input.select();
 }
 
 function editable(c) {
@@ -2050,6 +2138,8 @@ function applyOpsHere(c, ops) {
       c.note = (o.value ? lines.tickLine(added, o.index ?? count, o.text.replace(/\s+/g, " ").trim(), true) : added) || null;
     }
     if (o.op === "removeline") c.note = lines.removeLine(c.note, o.index, o.text) ?? c.note;
+    if (o.op === "renameline") c.note = lines.renameLine(c.note, o.index, o.text, o.to) ?? c.note;
+    if (o.op === "moveline") c.note = lines.moveLine(c.note, o.index, o.text, o.to) ?? c.note;
     if (o.op === "reset") c.note = lines.resetLines(c.note);
     if (o.op === "check") {
       c.collections = c.collections.map((m) => (m.name.toLowerCase() === o.name.toLowerCase() ? { ...m, checked: o.value } : m));
@@ -2098,6 +2188,17 @@ function inverseOps(ops, before) {
     }
     if (o.op === "reset") {
       for (const l of lines.listLines(before?.note)) if (l.checked) back.push({ op: "line", index: l.index, text: l.text, value: true });
+      continue;
+    }
+    if (o.op === "renameline") {
+      back.push({ op: "renameline", index: o.index, text: o.to.replace(/\s+/g, " ").trim(), to: o.text.trim() });
+      continue;
+    }
+    if (o.op === "moveline") {
+      const all = lines.listLines(before?.note);
+      const was = all.find((l) => l.index === o.index && l.text === o.text.trim()) ?? all.find((l) => l.text === o.text.trim());
+      if (!was) return null;
+      back.push({ op: "moveline", index: o.to, text: was.text, to: was.index });
       continue;
     }
     if (o.op === "pin" && o.collection) back.push({ op: "pin", value: !o.value, collection: o.collection });
@@ -2721,7 +2822,9 @@ function row(c, done) {
   const meta = document.createElement("div");
   meta.className = "row-meta";
   const voice = c.files.find((f) => f.type === "AUDIO" || f.mimeType?.startsWith("audio/"));
-  meta.textContent = listHere(c)
+  // A list says how it stands wherever it shows, as on the phone, not its markup.
+  const asList = listHere(c) || c.collections.some((m) => m.list);
+  meta.textContent = asList
     ? listCount(c)
     : [shortWhen(c.capturedAt), voice ? formatDuration(voice.durationMs) : "", c.title && !voice ? typeName(c.type) : "", c.sourceHost ?? sourceLabel(c.sourceApp)]
       .filter(Boolean)
@@ -2729,7 +2832,7 @@ function row(c, done) {
   const picture = c.files.find(isImage);
   b.append(picture ? thumb(picture, "row-thumb") : kindTile(c));
   text.append(title, meta);
-  const s = listHere(c) ? null : snippet(c, 140, words);
+  const s = asList ? null : snippet(c, 140, words);
   if (s) {
     const snip = document.createElement("div");
     snip.className = "row-snippet";

@@ -78,6 +78,39 @@ export function removeLine(note, index, text) {
   return lines.join("\n");
 }
 
+/** [note] with that line's words changed, ticked or not as it was, or null when it is not there. */
+export function renameLine(note, index, text, to) {
+  const words = to.replace(/\s+/g, " ").trim();
+  if (!words) return null;
+  const lines = (note ?? "").split("\n");
+  const at = find(lines, index, text);
+  if (at < 0) return null;
+  lines[at] = (parse(lines[at]).checked ? DONE : OPEN) + words;
+  return lines.join("\n");
+}
+
+function marks(lines) {
+  const at = [];
+  lines.forEach((line, i) => parse(line) && at.push(i));
+  return at;
+}
+
+/**
+ * [note] with that line moved so it is the checklist line at [to], the way a
+ * drag reorders a list; null when it is not there or [to] is past the end.
+ */
+export function moveLine(note, index, text, to) {
+  const lines = (note ?? "").split("\n");
+  const at = find(lines, index, text);
+  const from = marks(lines).indexOf(at);
+  if (at < 0 || to < 0 || to >= marks(lines).length) return null;
+  if (from === to) return note ?? "";
+  const [moving] = lines.splice(at, 1);
+  const rest = marks(lines);
+  lines.splice(to < rest.length ? rest[to] : rest[rest.length - 1] + 1, 0, moving);
+  return lines.join("\n");
+}
+
 /** [note] with every line unticked: the list ready to use again. */
 export function resetLines(note) {
   return (note ?? "").split("\n").map((line) => (parse(line)?.checked ? OPEN + parse(line).text : line)).join("\n");
