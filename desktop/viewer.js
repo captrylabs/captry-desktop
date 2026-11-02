@@ -8,7 +8,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=48";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=49";
 import {
   FILTERS,
   RANGES,
@@ -27,11 +27,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=48";
-import * as lines from "./list-lines.js?v=48";
-import * as store from "./store.js?v=48";
-import * as relay from "./relay.js?v=48";
-import * as pair from "./pair.js?v=48";
+} from "./library.js?v=49";
+import * as lines from "./list-lines.js?v=49";
+import * as store from "./store.js?v=49";
+import * as relay from "./relay.js?v=49";
+import * as pair from "./pair.js?v=49";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -1944,12 +1944,12 @@ function fillMenu(menu, items) {
 }
 
 /** A menu where the pointer is, for a right-click. */
-function contextMenu(x, y, items) {
+function contextMenu(x, y, items, parent = document.body) {
   hideTip();
   const menu = newMenu();
   fillMenu(menu, items);
   if (!menu.childElementCount) return;
-  document.body.append(menu);
+  parent.append(menu);
   menu.addEventListener("toggle", (event) => {
     if (event.newState === "closed") menu.remove();
   });
@@ -3478,8 +3478,67 @@ function isImage(f) {
   return f.type === "IMAGE" || f.mimeType?.startsWith("image/");
 }
 
+// A right-click on a picture saves it under the capture's name, which the
+// browser's Save image as cannot: a picture here has no file name of its own.
+// Shift and right-click still opens the browser's menu.
+function pictureMenu(img, c, f, { full = true } = {}) {
+  img.addEventListener("contextmenu", (event) => {
+    if (event.shiftKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items = [
+      { label: "Save picture", icon: "download", run: () => savePicture(c, f) },
+      { label: "Copy picture", icon: "copy", run: () => copyPicture(f) },
+    ];
+    if (full) items.push({ label: "View full screen", icon: "image", run: () => openLightbox(c, f) });
+    // Inside the full-screen view, so the menu is not behind it and out of reach.
+    const show = () => contextMenu(event.clientX, event.clientY, items, el.lightbox.open ? el.lightbox : document.body);
+    if (event.buttons) addEventListener("pointerup", () => setTimeout(show), { once: true });
+    else show();
+  });
+}
+
+async function savePicture(c, f) {
+  if (thumbOnly.has(f.file)) {
+    requestFull(c, f.file);
+    toast("Full picture on its way. Try again in a moment.");
+    return;
+  }
+  const url = await fileUrl(f);
+  if (!url) {
+    toast("This picture has not arrived yet.");
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileNameOf(c, f);
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+function copyPicture(f) {
+  // The clipboard takes PNG. It is handed a promise so the write starts while
+  // the click still counts as one.
+  const png = (async () => {
+    const img = new Image();
+    img.src = await fileUrl(f);
+    await img.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+    return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject()), "image/png"));
+  })();
+  navigator.clipboard
+    .write([new ClipboardItem({ "image/png": png })])
+    .then(() => toast("Picture copied"))
+    .catch(() => toast("Couldn't copy this picture."));
+}
+
 function imageButton(img, c, f) {
   fadeIn(img);
+  pictureMenu(img, c, f);
   const b = document.createElement("button");
   b.type = "button";
   b.className = "img-button";
@@ -3532,6 +3591,7 @@ async function showLightbox() {
   img.alt = f.textInImage ? "Capture image" : "";
   img.draggable = false;
   img.src = url;
+  pictureMenu(img, c, f, { full: false });
   img.addEventListener("click", (event) => {
     if (lb.dragged) return;
     zoomTo(lb.zoom ? 0 : Math.max(1, fitScale(img) * 2), event);
