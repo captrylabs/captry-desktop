@@ -414,6 +414,32 @@ export function titleOf(c) {
 }
 
 /**
+ * What a file is saved as: the capture's title and when it was captured,
+ * as 2026-11-02 1743 (no colon: Windows refuses one), not the phone's stored
+ * name. A second picture in one capture gets " (2)" and so on.
+ */
+export function fileNameOf(c, f) {
+  const base = titleOf(c)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.]+|[\s.]+$/g, "")
+    .slice(0, 80)
+    .trim() || "Capture";
+  const same = c.files.filter((x) => x.type === f.type);
+  const n = same.length > 1 ? ` (${same.findIndex((x) => x.file === f.file) + 1})` : "";
+  const at = c.capturedAt ? new Date(c.capturedAt) : null;
+  const pad = (v) => String(v).padStart(2, "0");
+  const day = at ? ` ${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}${pad(at.getMinutes())}` : "";
+  const ext = /\.([a-z0-9]{1,5})$/i.exec(f.file ?? "")?.[1] ?? MIME_EXT[f.mimeType] ?? "";
+  return `${base}${day}${n}${ext ? "." + ext.toLowerCase() : ""}`;
+}
+
+const MIME_EXT = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/heic": "heic",
+  "audio/mp4": "m4a", "audio/mpeg": "mp3", "audio/ogg": "ogg", "application/pdf": "pdf",
+};
+
+/**
  * The heading a capture sits under in a date-ordered list.
  *
  * Calendar days in the viewer's own time zone, which is what "Today" means to

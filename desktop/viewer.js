@@ -8,7 +8,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=47";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=48";
 import {
   FILTERS,
   RANGES,
@@ -17,6 +17,7 @@ import {
   sources,
   query,
   titleOf,
+  fileNameOf,
   typeName,
   sourceLabel,
   dateGroup,
@@ -26,11 +27,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=47";
-import * as lines from "./list-lines.js?v=47";
-import * as store from "./store.js?v=47";
-import * as relay from "./relay.js?v=47";
-import * as pair from "./pair.js?v=47";
+} from "./library.js?v=48";
+import * as lines from "./list-lines.js?v=48";
+import * as store from "./store.js?v=48";
+import * as relay from "./relay.js?v=48";
+import * as pair from "./pair.js?v=48";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -3518,7 +3519,7 @@ async function showLightbox() {
   el.lbDownload.hidden = !url;
   if (url) {
     el.lbDownload.href = url;
-    el.lbDownload.download = f.file;
+    el.lbDownload.download = fileNameOf(c, f);
   }
   if (!url) {
     const wait = document.createElement("p");
@@ -4375,7 +4376,7 @@ function fileBlock(f, c) {
       } else {
         const a = document.createElement("a");
         a.href = url;
-        a.download = f.file;
+        a.download = fileNameOf(c, f);
         a.textContent = `Save ${f.file}`;
         slot.replaceChildren(a);
       }
