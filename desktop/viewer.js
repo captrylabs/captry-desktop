@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=57";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=58";
 import {
   FILTERS,
   RANGES,
@@ -28,11 +28,12 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=57";
-import * as lines from "./list-lines.js?v=57";
-import * as store from "./store.js?v=57";
-import * as relay from "./relay.js?v=57";
-import * as pair from "./pair.js?v=57";
+} from "./library.js?v=58";
+import * as lines from "./list-lines.js?v=58";
+import * as store from "./store.js?v=58";
+import * as relay from "./relay.js?v=58";
+import * as pair from "./pair.js?v=58";
+import { qrModules, qrPath } from "./qr.js?v=58";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -247,9 +248,10 @@ let playing = null;
 
 // --- pairing with the phone -----------------------------------------------------------
 //
-// No files and no recovery code: the page shows a code, the person types
-// it into the phone, both show the same six digits, and once they tap Pair the
-// phone sends the key (sealed for this tab) and then the library.
+// No files and no recovery code: the page shows a QR code, the person scans
+// it with the phone, and once they tap Pair the phone sends the key (sealed
+// for this tab) and then the library. The code carries a secret the relay is
+// never told, so there is nothing for the person to compare.
 
 // Remember this computer: on by default. Off, as on a shared computer,
 // nothing about the pairing is kept once the tab is closed.
@@ -260,12 +262,11 @@ rememberBox.addEventListener("change", () => remember("rememberComputer", rememb
 const pairEl = {
   start: $("pair-start"),
   panel: $("pairing"),
-  code: $("pair-code"),
-  cells: $("pair-screen-cells"),
+  qr: $("pair-qr"),
+  title: $("pair-title"),
   status: $("pair-status"),
   left: $("pair-left"),
   bar: $("pair-bar"),
-  check: $("pair-check"),
   progress: $("pair-progress"),
   cancel: $("pair-cancel"),
 };
@@ -275,20 +276,19 @@ let pairing = null; // { code, cancelled }
 const PAIR_CODE_MS = 10 * 60_000;
 let pairCountdown = 0;
 
-/** The code as tiles, and on the drawn phone as if half typed; empty tiles while there is none. */
-function showPairCode(code) {
-  const chars = [...(code || "        ")];
-  const tile = (c) => Object.assign(document.createElement("span"), { className: "pair-tile", textContent: c.trim() });
-  const dash = Object.assign(document.createElement("span"), { className: "pair-dash" });
-  pairEl.code.replaceChildren(...chars.slice(0, 4).map(tile), dash, ...chars.slice(4).map(tile));
-  if (code) pairEl.code.setAttribute("aria-label", `Code ${code.slice(0, 4)} ${code.slice(4)}`);
-  else pairEl.code.removeAttribute("aria-label");
-  pairEl.cells.replaceChildren(...chars.map((c, i) => {
-    const cell = document.createElement("span");
-    if (code && i < 5) Object.assign(cell, { className: "filled", textContent: c });
-    else if (code && i === 5) cell.className = "cursor";
-    return cell;
-  }));
+/** The code to scan; an empty square while there is none. */
+function showPairCode(code, secret) {
+  pairEl.qr.replaceChildren();
+  if (!code) return;
+  // Dark on white whatever the theme, with the quiet margin a scanner needs.
+  const modules = qrModules(pair.pairQrText(code, secret));
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${modules.length + 8} ${modules.length + 8}`);
+  svg.setAttribute("shape-rendering", "crispEdges");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", qrPath(modules));
+  svg.append(path);
+  pairEl.qr.append(svg);
 }
 
 function startPairCountdown(started) {
@@ -315,6 +315,7 @@ pairEl.cancel.addEventListener("click", () => {
   }
   pairing = null;
   stopPairCountdown();
+  showPairCode(null);
   pairEl.panel.hidden = true;
   pairEl.start.hidden = false;
   document.getElementById("steps").hidden = false;
@@ -327,7 +328,7 @@ async function startPairing() {
   rememberBox.parentElement.hidden = true;
   pairEl.panel.hidden = false;
   pairEl.panel.dataset.stage = "code";
-  pairEl.check.hidden = true;
+  pairEl.title.textContent = "Scan this with your phone";
   pairEl.progress.hidden = true;
   pairEl.status.textContent = "Getting a code…";
   pairEl.left.textContent = "";
@@ -346,7 +347,9 @@ async function startPairing() {
     }
     if (!code) throw new Error("no code");
     session.code = code;
-    showPairCode(code);
+    // Only on this screen: the relay is never told it.
+    const scanSecret = pair.newPairSecret();
+    showPairCode(code, scanSecret);
     pairEl.status.textContent = "Waiting for your phone…";
 
     const started = Date.now();
@@ -360,12 +363,16 @@ async function startPairing() {
       await sleep(1500);
       const answer = await relay.pairAnswer(code);
       if (answer.phoneKey && !secret) {
-        secret = await pair.pairSecret(keys.privateKey, answer.phoneKey, code, keys.publicKey, answer.phoneKey);
-        pairEl.check.textContent = secret.check.slice(0, 3) + " " + secret.check.slice(3);
+        const { phoneKey, proof } = pair.splitAnswer(answer.phoneKey);
         stopPairCountdown();
-        pairEl.panel.dataset.stage = "check";
-        pairEl.check.hidden = false;
-        pairEl.status.textContent = "Your phone should show these numbers. If they match, tap Pair on the phone.";
+        // The proof shows the phone read the secret off this screen. An
+        // answer without the right one came from somewhere else.
+        secret = await pair.pairScanSecret(keys.privateKey, phoneKey, code, scanSecret, keys.publicKey, phoneKey);
+        if (secret.proof !== proof) throw new relay.RelayError("Pairing did not work. Start again.", 0);
+        pairEl.panel.dataset.stage = "scanned";
+        pairEl.title.textContent = "Scanned";
+        pairEl.status.textContent = "Tap Pair on your phone to finish.";
+        showPairCode(null);
       }
       if (answer.sealedKey && secret) {
         raw = await pair.openPairedKey(secret.key, answer.sealedKey);
@@ -377,7 +384,6 @@ async function startPairing() {
     const key = await importContentKey(raw);
 
     pairEl.panel.dataset.stage = "receive";
-    pairEl.check.hidden = true;
     pairEl.progress.hidden = false;
     pairEl.status.textContent = "Receiving your library…";
     let status = { total: 0, have: [] };
@@ -450,9 +456,9 @@ async function startPairing() {
     if (session.cancelled) return;
     console.error(e);
     stopPairCountdown();
+    showPairCode(null);
     pairEl.panel.dataset.stage = "error";
     pairEl.status.textContent = e instanceof relay.RelayError ? e.message : "Pairing did not work. Start again.";
-    pairEl.check.hidden = true;
     pairEl.progress.hidden = true;
     if (session.code) relay.pairDone(session.code, session.pageToken);
     pairing = null;

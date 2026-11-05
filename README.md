@@ -44,8 +44,8 @@ browser refuses a script that doesn't match.
 
 ## How the page protects your data
 
-- Pairing exchanges keys with the phone (ECDH P-256) and both screens show the same
-  six digits, so no one in between can join.
+- Pairing exchanges keys with the phone (ECDH P-256), mixed with a secret the
+  page shows as a QR code and never sends, so no one in between can join.
 - Everything the page sends is sealed with AES-256-GCM before it leaves, and
   padded so its exact size does not show. The relay at api.captry.app holds only
   ciphertext, for at most 14 days.

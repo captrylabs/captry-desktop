@@ -3,23 +3,46 @@
 //   page and phone each make an ECDH P-256 key pair and swap public keys
 //   (SubjectPublicKeyInfo, base64) through a pairing slot on the relay;
 //   shared = ECDH(own private, other public)            32 bytes, the x coordinate
-//   okm    = HKDF-SHA256(shared, salt = the code,
-//                        info = "captry pair v1" | page key | phone key, 35 bytes)
-//   key    = okm[0..32], an AES-256-GCM key
-//   check  = okm[32..35] as a number, mod 1,000,000: the six digits both show
 //
-// The phone sends the content key only after the person has seen the same six
-// digits on both screens and tapped Pair: sealedKey = nonce | AES-GCM(key,
-// content key, aad = "CPTRYPK1"). A relay that swapped in keys of its own
-// would make the two screens show different digits.
+// The page's QR code carries the slot's code and a secret the relay never
+// sees ("CAPTRY:P1:" | code | ":" | secret, 26 characters of the code's
+// alphabet), so only a phone that read this screen can finish:
+//
+//   okm    = HKDF-SHA256(shared, salt = the secret,
+//                        info = "captry pair v2" | code | page key | phone key, 48 bytes)
+//   key    = okm[0..32], an AES-256-GCM key
+//   proof  = okm[32..48], base64: the phone answers with its key | "." | proof,
+//            and the page goes no further without the right one
+//
+// The phone sends the content key only after the person taps Pair:
+// sealedKey = nonce | AES-GCM(key, content key, aad = "CPTRYPK1"). A relay
+// that swapped in keys of its own cannot open it, or make a proof the page
+// takes, without the secret.
+//
+// The code alone was once enough, typed into the phone with six digits to
+// compare on both screens. That went: the relay knows the code, and with
+// nothing committing either side to its key before the digits showed, a
+// relay swapping keys could try keys until the digits matched.
 
 const enc = new TextEncoder();
 const AAD = enc.encode("CPTRYPK1");
 export const PAIR_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
+/** The slot's name on the relay. Not a secret: the relay knows it. */
 export function newPairCode() {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   return [...bytes].map((b) => PAIR_ALPHABET[b & 31]).join("");
+}
+
+/** What the QR code adds to the code: 26 characters, 130 bits, shown and never sent. */
+export function newPairSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(26));
+  return [...bytes].map((b) => PAIR_ALPHABET[b & 31]).join("");
+}
+
+/** What the QR code says. Characters a QR code packs tightly, and nothing else. */
+export function pairQrText(code, secret) {
+  return `CAPTRY:P1:${code}:${secret}`;
 }
 
 export function b64(bytes) {
@@ -41,25 +64,26 @@ export async function pairKeys() {
   return { privateKey: pair.privateKey, publicKey: b64(new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey))) };
 }
 
-/** The AES key and the six-digit check, from either side's point of view. */
-export async function pairSecret(privateKey, peerKeyB64, code, pageKeyB64, phoneKeyB64) {
+/** The AES key and the proof the phone answers with, from either side's point of view. */
+export async function pairScanSecret(privateKey, peerKeyB64, code, secret, pageKeyB64, phoneKeyB64) {
   const peer = await crypto.subtle.importKey("spki", unb64(peerKeyB64), { name: "ECDH", namedCurve: "P-256" }, false, []);
   const shared = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: peer }, privateKey, 256));
   const ikm = await crypto.subtle.importKey("raw", shared, "HKDF", false, ["deriveBits"]);
-  const pageKey = unb64(pageKeyB64);
-  const phoneKey = unb64(phoneKeyB64);
-  const label = enc.encode("captry pair v1");
-  const info = new Uint8Array(label.length + pageKey.length + phoneKey.length);
-  info.set(label, 0);
-  info.set(pageKey, label.length);
-  info.set(phoneKey, label.length + pageKey.length);
-  const okm = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: enc.encode(code), info }, ikm, 35 * 8));
+  const parts = [enc.encode(`captry pair v2${code}`), unb64(pageKeyB64), unb64(phoneKeyB64)];
+  const info = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  parts.reduce((at, p) => (info.set(p, at), at + p.length), 0);
+  const okm = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: enc.encode(secret), info }, ikm, 48 * 8));
   shared.fill(0);
   const key = await crypto.subtle.importKey("raw", okm.subarray(0, 32), "AES-GCM", false, ["encrypt", "decrypt"]);
-  const n = (okm[32] << 16) | (okm[33] << 8) | okm[34];
-  const check = String(n % 1_000_000).padStart(6, "0");
+  const proof = b64(okm.subarray(32, 48));
   okm.fill(0);
-  return { key, check };
+  return { key, proof };
+}
+
+/** The phone's answer: its key, then the proof after a ".". */
+export function splitAnswer(answer) {
+  const [phoneKey, proof = ""] = String(answer).split(".");
+  return { phoneKey, proof };
 }
 
 /** The content key the phone sent, or null if it does not open. */
