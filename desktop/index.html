@@ -396,6 +396,10 @@
     .pair-screen-cells span { display: grid; place-items: center; height: 22px; box-sizing: border-box; border-radius: 5px; background: var(--line); }
     .pair-screen-cells .filled { background: var(--selected); }
     .pair-screen-cells .cursor { background: none; border: 1.5px solid var(--accent); }
+    /* The phone's caret: fades out and back, as the app's does. */
+    .pair-screen-cells .cursor::after { content: ""; width: 1.5px; height: 11px; background: var(--accent); animation: pair-caret 0.53s ease-in-out infinite alternate; }
+    @keyframes pair-caret { to { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .pair-screen-cells .cursor::after { animation: none; } }
     .pair-screen-button { margin-top: auto; height: 26px; border-radius: 13px; background: var(--accent); opacity: 0.45; }
     /* Once the phone has answered, only what the step needs. */
     .pairing:not([data-stage="code"]) { width: 100%; padding: 24px 20px; text-align: center; }
@@ -1080,16 +1084,16 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=50": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=50": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=50": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=50": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
-        "/desktop/relay.js?v=50": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=50": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=50": "sha384-ixKxllumycHW9hlmntmbgJG3zL6w61Ro+89Vh7IF+tskkpj8A1OIbVZKAP9aQacF"
+        "/desktop/library-format.js?v=51": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=51": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=51": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=51": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
+        "/desktop/relay.js?v=51": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=51": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=51": "sha384-KqnNcROHZ0W+19eILloIX6F47IX7RstO7qAqZ9FYsK3FTSUXBy+t7fIe/WaR42DI"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=50" integrity="sha384-ixKxllumycHW9hlmntmbgJG3zL6w61Ro+89Vh7IF+tskkpj8A1OIbVZKAP9aQacF"></script>
+  <script type="module" src="./viewer.js?v=51" integrity="sha384-KqnNcROHZ0W+19eILloIX6F47IX7RstO7qAqZ9FYsK3FTSUXBy+t7fIe/WaR42DI"></script>
 </body>
 </html>
