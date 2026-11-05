@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=56";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=57";
 import {
   FILTERS,
   RANGES,
@@ -28,11 +28,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=56";
-import * as lines from "./list-lines.js?v=56";
-import * as store from "./store.js?v=56";
-import * as relay from "./relay.js?v=56";
-import * as pair from "./pair.js?v=56";
+} from "./library.js?v=57";
+import * as lines from "./list-lines.js?v=57";
+import * as store from "./store.js?v=57";
+import * as relay from "./relay.js?v=57";
+import * as pair from "./pair.js?v=57";
 
 const PAGE = 150;
 let lastShownId = null;
