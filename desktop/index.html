@@ -364,12 +364,49 @@
     .skeleton-row .s-lines { flex: 1; display: flex; flex-direction: column; gap: 7px; padding-top: 3px; }
     .skeleton-row .s-line { height: 11px; }
 
-    .pairing { width: 100%; margin: 4px 0 0; padding: 24px 20px; border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); }
-    .pair-step { margin: 0 0 8px; }
-    .pair-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: clamp(32px, 9vw, 46px); font-weight: 700; letter-spacing: 0.14em; margin: 6px 0 2px; }
-    .pair-status { color: var(--muted); margin: 10px 0; min-height: 22px; }
+    /* Pairing: the code with where to type it, and a phone drawn beside it.
+       Wider than the column around it while the code is up. */
+    .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); display: flex; align-items: center; gap: 40px; width: min(800px, calc(100vw - 40px)); box-sizing: border-box; margin: 4px 0 0; padding: 34px 36px; border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: left; }
+    .pairing[hidden] { display: none; }
+    .pair-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
+    .pair-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+    .pair-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
+    .pair-path li { display: flex; align-items: center; gap: 6px; }
+    .pair-path li:first-child, .pair-path span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--pair-edge); border-radius: 999px; }
+    .pair-path li:first-child svg { width: 15px; height: 15px; }
+    .pair-path li > svg { width: 14px; height: 14px; color: var(--muted); }
+    .pair-path .here { border-color: var(--accent); font-weight: 600; }
+    .pair-codebox { display: flex; flex-direction: column; gap: 18px; }
+    .pair-code { display: flex; align-items: center; gap: 8px; }
+    .pair-tile { display: grid; place-items: center; width: clamp(28px, 7vw, 50px); aspect-ratio: 50 / 64; box-sizing: border-box; border: 1px solid var(--pair-edge); border-radius: 12px; background: var(--paper); font-size: clamp(22px, 6vw, 34px); font-weight: 700; line-height: 1; }
+    .pair-dash { flex: none; width: 14px; height: 3px; margin: 0 5px; border-radius: 2px; background: var(--pair-edge); }
+    .pair-timer { display: flex; flex-direction: column; gap: 8px; }
+    .pair-timer-row { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 14px; min-height: 21px; }
+    #pair-left { font-variant-numeric: tabular-nums; }
+    .pair-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+    .pair-bar > div { width: 100%; height: 100%; background: var(--accent); transition: width 1s linear; }
+    @media (prefers-reduced-motion: reduce) { .pair-bar > div { transition: none; } }
+    .pair-phone { flex: none; width: 168px; height: 320px; box-sizing: border-box; padding: 10px; border: 2px solid var(--pair-edge); border-radius: 30px; background: var(--paper); }
+    .pair-screen { display: flex; flex-direction: column; gap: 10px; height: 100%; box-sizing: border-box; padding: 22px 12px 12px; border-radius: 22px; background: color-mix(in srgb, var(--well) 92%, var(--ink)); }
+    .pair-screen-back { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+    .pair-screen-back svg { width: 10px; height: 10px; }
+    .pair-screen-title { font-size: 14px; font-weight: 600; }
+    .pair-screen-text { color: var(--muted); font-size: 9px; line-height: 1.35; }
+    .pair-screen-cells { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; margin-top: 6px; font-size: 12px; font-weight: 700; }
+    .pair-screen-cells span { display: grid; place-items: center; height: 22px; box-sizing: border-box; border-radius: 5px; background: var(--line); }
+    .pair-screen-cells .filled { background: var(--selected); }
+    .pair-screen-cells .cursor { background: none; border: 1.5px solid var(--accent); }
+    .pair-screen-button { margin-top: auto; height: 26px; border-radius: 13px; background: var(--accent); opacity: 0.45; }
+    /* Once the phone has answered, only what the step needs. */
+    .pairing:not([data-stage="code"]) { width: 100%; padding: 24px 20px; text-align: center; }
+    .pairing:not([data-stage="code"]) .pair-main { align-items: center; gap: 12px; }
+    .pairing:not([data-stage="code"]) :is(.pair-phone, .pair-title, .pair-path, .pair-code, #pair-left, .pair-bar) { display: none; }
+    .pairing:not([data-stage="code"]) .pair-codebox { width: 100%; }
+    .pairing:not([data-stage="code"]) .pair-timer-row { justify-content: center; }
+    @media (max-width: 760px) { .pair-phone { display: none; } .pairing { padding: 26px 22px; } }
+    @media (max-width: 460px) { .pairing { padding: 22px 16px; } .pair-code { gap: 4px; } .pair-dash { width: 10px; margin: 0 2px; } }
     .pair-check { font-family: ui-monospace, Consolas, monospace; font-size: 30px; font-weight: 700; letter-spacing: 0.1em; color: var(--accent); margin: 4px 0 12px; }
-    .pair-progress { height: 8px; border-radius: 4px; background: var(--paper); overflow: hidden; margin: 6px auto 14px; max-width: 320px; }
+    .pair-progress { width: 100%; height: 8px; border-radius: 4px; background: var(--paper); overflow: hidden; margin: 6px auto 14px; max-width: 320px; }
     .pair-progress > div { height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
 
     #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 10; max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 12px; background: var(--ink); color: var(--paper); font-size: 15px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
@@ -802,13 +839,34 @@
           Remember this computer
         </label>
 
-        <section id="pairing" class="pairing" hidden>
-          <p class="pair-step">On your phone, go to Settings &gt; Network &gt; Pair a computer and enter</p>
-          <div id="pair-code" class="pair-code" aria-live="polite"></div>
-          <p id="pair-status" class="pair-status" aria-live="polite"></p>
-          <div id="pair-check" class="pair-check" hidden></div>
-          <div id="pair-progress" class="pair-progress" hidden><div></div></div>
-          <button id="pair-cancel" class="button" type="button">Cancel</button>
+        <section id="pairing" class="pairing" data-stage="code" hidden>
+          <div class="pair-phone" aria-hidden="true">
+            <div class="pair-screen">
+              <div class="pair-screen-back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Network</div>
+              <div class="pair-screen-title">Pair a computer</div>
+              <div class="pair-screen-text">Open captry.app/desktop on your computer and enter the code it shows.</div>
+              <div id="pair-screen-cells" class="pair-screen-cells"></div>
+              <div class="pair-screen-button"></div>
+            </div>
+          </div>
+          <div class="pair-main">
+            <h2 class="pair-title">Enter this code on your phone</h2>
+            <ol class="pair-path" aria-label="On your phone">
+              <li><svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></g></svg>Settings</li>
+              <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Network</span></li>
+              <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="here">Pair a computer</span></li>
+            </ol>
+            <div class="pair-codebox">
+              <div id="pair-code" class="pair-code" role="img"></div>
+              <div class="pair-timer">
+                <div class="pair-timer-row"><span id="pair-status" aria-live="polite"></span><span id="pair-left"></span></div>
+                <div id="pair-bar" class="pair-bar"><div></div></div>
+              </div>
+            </div>
+            <div id="pair-check" class="pair-check" hidden></div>
+            <div id="pair-progress" class="pair-progress" hidden><div></div></div>
+            <button id="pair-cancel" class="button" type="button">Cancel</button>
+          </div>
         </section>
 
         <p id="status" aria-live="polite"></p>
@@ -1022,16 +1080,16 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=49": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=49": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=49": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=49": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
-        "/desktop/relay.js?v=49": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=49": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=49": "sha384-86BYTmxnFNVWhxAkbeZLN/uoJXP4MYmI9zsWqdcDAy0P9JZhfb2PVWEgH/qJVcDL"
+        "/desktop/library-format.js?v=50": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=50": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=50": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=50": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
+        "/desktop/relay.js?v=50": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=50": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=50": "sha384-ixKxllumycHW9hlmntmbgJG3zL6w61Ro+89Vh7IF+tskkpj8A1OIbVZKAP9aQacF"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=49" integrity="sha384-86BYTmxnFNVWhxAkbeZLN/uoJXP4MYmI9zsWqdcDAy0P9JZhfb2PVWEgH/qJVcDL"></script>
+  <script type="module" src="./viewer.js?v=50" integrity="sha384-ixKxllumycHW9hlmntmbgJG3zL6w61Ro+89Vh7IF+tskkpj8A1OIbVZKAP9aQacF"></script>
 </body>
 </html>

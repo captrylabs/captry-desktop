@@ -1,14 +1,15 @@
 // The desktop page: pair with the phone, then read, search and send captures.
 //
-// Nothing here talks to a server. The file is read from disk, decrypted in
-// this tab, and shown. The page's Content-Security-Policy forbids every
+// The library comes from the phone at pairing and is kept up to date through
+// the relay at api.captry.app, sealed all the way: it is opened in this tab
+// and nowhere else. The page's Content-Security-Policy allows that one
 // network destination, so that promise is enforced by the browser rather
 // than by this code being careful.
 //
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=49";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=50";
 import {
   FILTERS,
   RANGES,
@@ -27,11 +28,11 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=49";
-import * as lines from "./list-lines.js?v=49";
-import * as store from "./store.js?v=49";
-import * as relay from "./relay.js?v=49";
-import * as pair from "./pair.js?v=49";
+} from "./library.js?v=50";
+import * as lines from "./list-lines.js?v=50";
+import * as store from "./store.js?v=50";
+import * as relay from "./relay.js?v=50";
+import * as pair from "./pair.js?v=50";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -260,12 +261,51 @@ const pairEl = {
   start: $("pair-start"),
   panel: $("pairing"),
   code: $("pair-code"),
+  cells: $("pair-screen-cells"),
   status: $("pair-status"),
+  left: $("pair-left"),
+  bar: $("pair-bar"),
   check: $("pair-check"),
   progress: $("pair-progress"),
   cancel: $("pair-cancel"),
 };
 let pairing = null; // { code, cancelled }
+
+/** How long the relay keeps a code open for a phone to answer. */
+const PAIR_CODE_MS = 10 * 60_000;
+let pairCountdown = 0;
+
+/** The code as tiles, and on the drawn phone as if half typed; empty tiles while there is none. */
+function showPairCode(code) {
+  const chars = [...(code || "        ")];
+  const tile = (c) => Object.assign(document.createElement("span"), { className: "pair-tile", textContent: c.trim() });
+  const dash = Object.assign(document.createElement("span"), { className: "pair-dash" });
+  pairEl.code.replaceChildren(...chars.slice(0, 4).map(tile), dash, ...chars.slice(4).map(tile));
+  if (code) pairEl.code.setAttribute("aria-label", `Code ${code.slice(0, 4)} ${code.slice(4)}`);
+  else pairEl.code.removeAttribute("aria-label");
+  pairEl.cells.replaceChildren(...chars.map((c, i) => {
+    const cell = document.createElement("span");
+    if (code && i < 5) Object.assign(cell, { className: "filled", textContent: c });
+    else if (code && i === 5) cell.className = "cursor";
+    return cell;
+  }));
+}
+
+function startPairCountdown(started) {
+  stopPairCountdown();
+  const tick = () => {
+    const left = Math.max(0, PAIR_CODE_MS - (Date.now() - started));
+    const s = Math.ceil(left / 1000);
+    pairEl.left.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} left`;
+    pairEl.bar.firstElementChild.style.width = `${(left / PAIR_CODE_MS) * 100}%`;
+  };
+  tick();
+  pairCountdown = setInterval(tick, 1000);
+}
+
+function stopPairCountdown() {
+  clearInterval(pairCountdown);
+}
 
 pairEl.start.addEventListener("click", startPairing);
 pairEl.cancel.addEventListener("click", () => {
@@ -274,6 +314,7 @@ pairEl.cancel.addEventListener("click", () => {
     relay.pairDone(pairing.code, pairing.pageToken);
   }
   pairing = null;
+  stopPairCountdown();
   pairEl.panel.hidden = true;
   pairEl.start.hidden = false;
   document.getElementById("steps").hidden = false;
@@ -285,10 +326,13 @@ async function startPairing() {
   document.getElementById("steps").hidden = true;
   rememberBox.parentElement.hidden = true;
   pairEl.panel.hidden = false;
+  pairEl.panel.dataset.stage = "code";
   pairEl.check.hidden = true;
   pairEl.progress.hidden = true;
   pairEl.status.textContent = "Getting a code…";
-  pairEl.code.textContent = "";
+  pairEl.left.textContent = "";
+  pairEl.bar.firstElementChild.style.width = "100%";
+  showPairCode(null);
   // Remembered or not is decided now, before any picture is cached.
   const session = { cancelled: false, pageToken: relay.newPairToken(), ephemeral: !rememberBox.checked };
   pairing = session;
@@ -302,21 +346,24 @@ async function startPairing() {
     }
     if (!code) throw new Error("no code");
     session.code = code;
-    pairEl.code.textContent = code.slice(0, 4) + " " + code.slice(4);
-    pairEl.status.textContent = "Waiting for your phone… The code works for 10 minutes.";
+    showPairCode(code);
+    pairEl.status.textContent = "Waiting for your phone…";
 
     const started = Date.now();
+    startPairCountdown(started);
     let secret = null;
     let phoneLabel = "your phone";
     let raw = null;
     while (!raw) {
       if (session.cancelled) return;
-      if (Date.now() - started > 10 * 60_000 && !secret) throw new relay.RelayError("The code expired. Start again.", 410);
+      if (Date.now() - started > PAIR_CODE_MS && !secret) throw new relay.RelayError("The code expired. Start again.", 410);
       await sleep(1500);
       const answer = await relay.pairAnswer(code);
       if (answer.phoneKey && !secret) {
         secret = await pair.pairSecret(keys.privateKey, answer.phoneKey, code, keys.publicKey, answer.phoneKey);
         pairEl.check.textContent = secret.check.slice(0, 3) + " " + secret.check.slice(3);
+        stopPairCountdown();
+        pairEl.panel.dataset.stage = "check";
         pairEl.check.hidden = false;
         pairEl.status.textContent = "Your phone should show these numbers. If they match, tap Pair on the phone.";
       }
@@ -329,6 +376,7 @@ async function startPairing() {
     const relayToken = await relayTokenFrom(raw);
     const key = await importContentKey(raw);
 
+    pairEl.panel.dataset.stage = "receive";
     pairEl.check.hidden = true;
     pairEl.progress.hidden = false;
     pairEl.status.textContent = "Receiving your library…";
@@ -401,6 +449,8 @@ async function startPairing() {
   } catch (e) {
     if (session.cancelled) return;
     console.error(e);
+    stopPairCountdown();
+    pairEl.panel.dataset.stage = "error";
     pairEl.status.textContent = e instanceof relay.RelayError ? e.message : "Pairing did not work. Start again.";
     pairEl.check.hidden = true;
     pairEl.progress.hidden = true;
@@ -420,7 +470,7 @@ const requestedFull = new Set();
 
 /** Asks the phone, once, for the full-size copy of a picture. */
 async function requestFull(c, name) {
-  if (requestedFull.has(name) || !opened?.relayToken || !opened.key) return;
+  if (requestedFull.has(name) || !opened?.relayToken || !opened.key || opened.paused) return;
   requestedFull.add(name);
   try {
     const change = { format: 1, id: crypto.randomUUID(), at: Date.now(), capture: c.id, ops: [{ op: "want", file: name }] };
@@ -613,6 +663,10 @@ el.newCapture.addEventListener("click", () => openCompose());
 async function openCompose({ text = "", file = null } = {}) {
   if (!opened?.key || !opened.relayToken) {
     toast("Pair with your phone first, then send captures from here.");
+    return;
+  }
+  if (opened.paused) {
+    toast(PAUSED);
     return;
   }
   // Whatever was left in it last time is still there: a draft is only
@@ -1032,6 +1086,11 @@ el.compose.addEventListener("submit", async (event) => {
     el.composeText.focus();
     return;
   }
+  // Paused while this was open: the words stay, as a draft.
+  if (opened.paused) {
+    toast(PAUSED);
+    return;
+  }
   const choices = composeChoices();
   if (choices.problem) {
     toast(choices.problem);
@@ -1230,10 +1289,42 @@ async function syncFeed() {
   }
 }
 
+// --- paused ------------------------------------------------------------------------
+//
+// Pro ended on the phone: it says so through the feed, collects what was
+// already waiting and then sends and takes nothing more. The library here
+// stays readable; captures and edits from here stop, since nothing would
+// collect them. Its word that Pro is back, or any change after it, starts
+// things again.
+
+const PAUSED = "Sync is paused. Captry Pro ended on your phone.";
+
+/** True when it changed. */
+function setPaused(paused) {
+  if (!opened || !!opened.paused === paused) return false;
+  opened.paused = paused;
+  updateSync();
+  toast(paused ? PAUSED : "Syncing with your phone again");
+  return true;
+}
+
+/**
+ * A change from a phone last heard to be paused: its word that Pro was back
+ * was dropped for age, and other changes may have gone with it.
+ */
+function changedWhilePaused() {
+  if (!opened.paused) return;
+  setPaused(false);
+  feed.missing = true;
+}
+
 function applyChanges(changes) {
   let n = 0;
   for (const change of changes) {
-    if (change.op === "result" && change.id) {
+    if (change.op === "paused" || change.op === "resumed") {
+      // Counted, so it is kept with the library and the page is drawn again.
+      n += setPaused(change.op === "paused") ? 1 : 0;
+    } else if (change.op === "result" && change.id) {
       n += settleEdit(change) ? 1 : 0;
     } else if (change.op === "files" && Array.isArray(change.files)) {
       for (const f of change.files) {
@@ -1250,12 +1341,14 @@ function applyChanges(changes) {
         n++;
       }
     } else if (change.op === "delete" && change.id) {
+      changedWhilePaused();
       const before = opened.manifest.captures.length;
       opened.manifest.captures = opened.manifest.captures.filter((c) => c.id !== change.id);
       n += before - opened.manifest.captures.length;
     } else if (change.op === "upsert" && change.capture) {
       const capture = decodeCapture(change.capture);
       if (!capture?.id) continue;
+      changedWhilePaused();
       for (const f of change.files ?? []) {
         if (!f.file || !f.data) continue;
         const mime = capture.files.find((x) => x.file === f.file)?.mimeType ?? "";
@@ -2083,6 +2176,10 @@ function openEditor(c, field) {
 }
 
 async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = false } = {}) {
+  if (opened.paused) {
+    toast(PAUSED);
+    return;
+  }
   const change = { format: 1, id: crypto.randomUUID(), at: Date.now(), capture: c.id, ops };
   const before = snapshotCapture(c);
   const trashing = ops.some((o) => o.op === "trash");
@@ -2355,10 +2452,11 @@ function persistLibrary() {
       captures,
       feed: { seq: feed.seq, since: feed.since },
       thumbs: [...thumbOnly],
+      paused: !!target.paused,
     };
     const sealed = await sealCache(target.key, new TextEncoder().encode(JSON.stringify(payload)));
     if (opened !== target) return;
-    await store.saveLibrary({ name: target.name, placeKind: target.place.kind, sealed, savedAt: Date.now() });
+    await store.saveLibrary({ name: target.name, placeKind: target.place.kind, sealed, savedAt: Date.now(), paused: !!target.paused });
   }, 1500);
 }
 
@@ -2366,8 +2464,9 @@ function persistLibrary() {
 async function openFromCache(saved) {
   const record = await store.loadLibrary();
   if (!record?.sealed || record.placeKind !== "paired") return false;
-  // Older than the relay keeps the phone's changes: pair again.
-  if (Date.now() - record.savedAt > 13 * 24 * 60 * 60_000) return false;
+  // Older than the relay keeps the phone's changes: pair again. Not while
+  // paused: the phone sent nothing to miss, and what is here stays readable.
+  if (!record.paused && Date.now() - record.savedAt > 13 * 24 * 60 * 60_000) return false;
   const plain = await openCache(saved.key, record.sealed);
   if (!plain) return false;
   let payload;
@@ -2389,6 +2488,7 @@ async function openFromCache(saved) {
     name: payload.name,
     place,
     cached: true,
+    paused: !!payload.paused,
   };
   feed = { seq: payload.feed?.seq ?? 0, since: payload.feed?.since ?? 0, applied: 0, missing: false };
   sentItems = await loadSent(saved.key);
@@ -3293,7 +3393,10 @@ function updateSync() {
   const changes = waiting === 1 ? "1 change" : `${waiting} changes`;
   // Short words for the pill; the whole sentence for its menu.
   let state, short, full, detail;
-  if (!navigator.onLine) {
+  if (opened.paused) {
+    [state, short, full, detail] = ["stuck", "Paused", "Sync is paused",
+      "Captry Pro ended on your phone. Turn it back on there to sync again."];
+  } else if (!navigator.onLine) {
     [state, short, full, detail] = ["off", "Offline", waiting ? `Offline, ${changes} queued` : "Offline",
       "Changes wait here and go when you're back online."];
   } else if (waiting && now - oldest > 3 * 60_000) {
@@ -4690,6 +4793,6 @@ function remember(key, value) {
 }
 
 // For checking the page with a fixture, without a file picker in the way.
-window.captryViewer = { state: () => ({ cached: !!opened?.cached, live: liveUp, seq: feed.seq }) };
+window.captryViewer = { state: () => ({ cached: !!opened?.cached, live: liveUp, seq: feed.seq, paused: !!opened?.paused }) };
 
 offerRemembered();

@@ -10,12 +10,12 @@
   X-Robots-Tag: index, follow
 
 # The desktop viewer runs a script and shows images and audio it decrypted
-# itself. One network destination: the relay that carries sealed captures to
-# the phone. The backup itself never leaves the browser, and this header is
-# what holds the page to that, not the code.
+# itself. One network destination: the relay that carries sealed captures
+# between it and the phone. Nothing unsealed leaves the browser, and this
+# header is what holds the page to that, not the code.
 /desktop/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-nO82+tmANMmAMxxvchA9lTxhlkbEegc73L5x1xmqGPk='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-m5rLaABavME8/c0oROlsTfJj32zvbuzI9Cicau5EaqA='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   ! X-Robots-Tag
   X-Robots-Tag: noindex
 
