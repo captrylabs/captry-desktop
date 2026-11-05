@@ -388,10 +388,8 @@
     @media (prefers-reduced-motion: reduce) { .pair-bar > div { transition: none; } }
     .pair-phone { flex: none; width: 168px; height: 320px; box-sizing: border-box; padding: 10px; border: 2px solid var(--pair-edge); border-radius: 30px; background: var(--paper); }
     .pair-screen { display: flex; flex-direction: column; gap: 10px; height: 100%; box-sizing: border-box; padding: 22px 12px 12px; border-radius: 22px; background: color-mix(in srgb, var(--well) 92%, var(--ink)); }
-    .pair-screen-back { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
-    .pair-screen-back svg { width: 10px; height: 10px; }
-    .pair-screen-title { font-size: 14px; font-weight: 600; }
-    .pair-screen-text { color: var(--muted); font-size: 9px; line-height: 1.35; }
+    .pair-screen-title { font-size: 14px; font-weight: 600; text-align: center; }
+    .pair-screen-text { color: var(--muted); font-size: 8px; line-height: 1.35; }
     .pair-screen-cells { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; margin-top: 6px; font-size: 12px; font-weight: 700; }
     .pair-screen-cells span { display: grid; place-items: center; height: 22px; box-sizing: border-box; border-radius: 5px; background: color-mix(in srgb, var(--muted) 25%, transparent); }
     .pair-screen-cells .filled { background: var(--selected); }
@@ -400,7 +398,7 @@
     .pair-screen-cells .cursor::after { content: ""; width: 1.5px; height: 11px; background: var(--accent); animation: pair-caret 0.53s ease-in-out infinite alternate; }
     @keyframes pair-caret { to { opacity: 0; } }
     @media (prefers-reduced-motion: reduce) { .pair-screen-cells .cursor::after { animation: none; } }
-    .pair-screen-icon { width: 16px; height: 16px; color: var(--muted); }
+    .pair-screen-icon { align-self: center; width: 16px; height: 16px; color: var(--muted); }
     /* Cancel as a text button, Continue held back until the code is whole, as on the phone. */
     .pair-screen-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: auto; font-size: 10px; font-weight: 600; }
     .pair-screen-buttons span:first-child { color: var(--accent); }
@@ -850,7 +848,6 @@
         <section id="pairing" class="pairing" data-stage="code" hidden>
           <div class="pair-phone" aria-hidden="true">
             <div class="pair-screen">
-              <div class="pair-screen-back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Network</div>
               <svg class="pair-screen-icon" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></g></svg>
               <div class="pair-screen-title">Pair a computer</div>
               <div class="pair-screen-text">Open captry.app/desktop on your computer and enter the code it shows.</div>
@@ -1089,16 +1086,16 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=53": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=53": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=53": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=53": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
-        "/desktop/relay.js?v=53": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=53": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=53": "sha384-okGXZdbHbtDQRCkFGBgB+9JBHXA/Zzbs/dzJpQdLCvDJii/TBVHeOtsIrfrgxpUb"
+        "/desktop/library-format.js?v=54": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=54": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=54": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=54": "sha384-C3u9TkFcNvZa1yD1Tcz/Xe+FejMfD0y1kfohjZjzj5+m2rPyzSA2nIAJdkpqaLBf",
+        "/desktop/relay.js?v=54": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=54": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=54": "sha384-fUnsB7n2cgZ4NmBejFMWEyjh5WyRl1ab/mOTqmR5rPI5qv2WZLmjjBZqABuIMhyl"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=53" integrity="sha384-okGXZdbHbtDQRCkFGBgB+9JBHXA/Zzbs/dzJpQdLCvDJii/TBVHeOtsIrfrgxpUb"></script>
+  <script type="module" src="./viewer.js?v=54" integrity="sha384-fUnsB7n2cgZ4NmBejFMWEyjh5WyRl1ab/mOTqmR5rPI5qv2WZLmjjBZqABuIMhyl"></script>
 </body>
 </html>
