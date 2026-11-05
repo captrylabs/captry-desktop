@@ -2,6 +2,20 @@
   "about": "SHA-256 of each release of captry.app/desktop/. The index hash covers the page: index.html pins every script it loads by its SHA-384. Check it with: curl -s https://captry.app/desktop/ | shasum -a 256",
   "releases": [
     {
+      "release": 52,
+      "date": "2026-11-05",
+      "index": "63f831630300f23b1d664c00b616ea9c00bd9e92d16ed7f2cb4bfafe11689571",
+      "files": {
+        "library-format.js": "e19fe663055aa2b0e25b2bc859bacdc1f6a63d17121abe69b9d6ca694a762f1a",
+        "library.js": "7abb282b3ca23c5fcf637ab3bbd50a7d32e5674f5708cbb2487cb87317ac4844",
+        "list-lines.js": "a9635043bd16a8a81bb451165ec7d20c15174d6cfc707ab16cb9ba7c0d83e389",
+        "pair.js": "2ba8c92d5a5ff977d8a95acc5d5d266e0b6391e83a1a59e86bacd9be86939ae5",
+        "relay.js": "38634a5db727400319ec082a36af45d52c9f9df8eafded61decfbbca0e6b5f5b",
+        "store.js": "8f48404bf13583c56746955c1cfc211961dc5a4a83e7033644b9634f50fce1c4",
+        "viewer.js": "6874198c2058b920babde82aeeed76c8c6e300fd0b39d79ab53ee4a626404383"
+      }
+    },
+    {
       "release": 51,
       "date": "2026-11-05",
       "index": "ee0f0c59cda0a82c1a183c2a64c898a5c50f3a2ce91e2de5596df94ef17a2b9c",
