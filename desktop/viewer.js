@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=61";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=62";
 import {
   FILTERS,
   RANGES,
@@ -28,12 +28,12 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=61";
-import * as lines from "./list-lines.js?v=61";
-import * as store from "./store.js?v=61";
-import * as relay from "./relay.js?v=61";
-import * as pair from "./pair.js?v=61";
-import { qrModules, qrPath } from "./qr.js?v=61";
+} from "./library.js?v=62";
+import * as lines from "./list-lines.js?v=62";
+import * as store from "./store.js?v=62";
+import * as relay from "./relay.js?v=62";
+import * as pair from "./pair.js?v=62";
+import { qrModules, qrDotsPath, qrFinderPath, QR_HOLE } from "./qr.js?v=62";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -270,6 +270,8 @@ const pairEl = {
   progress: $("pair-progress"),
   cancel: $("pair-cancel"),
 };
+// The name the phone will show for this computer, to check against.
+$("pair-label").textContent = pair.browserLabel();
 let pairing = null; // { code, cancelled }
 
 /** How long the relay keeps a code open for a phone to answer. */
@@ -282,12 +284,24 @@ function showPairCode(code, secret) {
   if (!code) return;
   // Dark on white whatever the theme, with the quiet margin a scanner needs.
   const modules = qrModules(pair.pairQrText(code, secret));
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${modules.length + 8} ${modules.length + 8}`);
-  svg.setAttribute("shape-rendering", "crispEdges");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", qrPath(modules));
-  svg.append(path);
+  const quiet = 4;
+  const across = modules.length + 2 * quiet;
+  const make = (name, attrs) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    return node;
+  };
+  const svg = make("svg", { viewBox: `0 0 ${across} ${across}` });
+  svg.append(make("path", { d: qrDotsPath(modules, quiet) }), make("path", { d: qrFinderPath(modules.length, quiet), "fill-rule": "evenodd" }));
+  // Captry's mark, in the square the code leaves clear for it.
+  const side = QR_HOLE - 1;
+  const at = (across - side) / 2;
+  const mark = make("svg", { x: at + 0.9, y: at + 0.9, width: side - 1.8, height: side - 1.8, viewBox: "30.544 30.544 46.912 46.912", fill: "none", stroke: "#fff", "stroke-linecap": "round" });
+  mark.append(
+    make("path", { d: "M54 33.96L54 74.04M71.355 43.98L36.645 64.02M71.355 64.02L36.645 43.98", "stroke-width": 1.451 }),
+    make("path", { d: "M70.571 42.183Q72.519 43.308 72.519 45.558L72.519 62.442Q72.519 64.692 70.571 65.817L55.949 74.259Q54 75.384 52.051 74.259L37.429 65.817Q35.481 64.692 35.481 62.442L35.481 45.558Q35.481 43.308 37.429 42.183L52.051 33.741Q54 32.616 55.949 33.741Z", "stroke-width": 2.232, "stroke-linejoin": "round" }),
+  );
+  svg.append(make("rect", { x: at, y: at, width: side, height: side, rx: 1.6, fill: "#5b3df5" }), mark);
   pairEl.qr.append(svg);
 }
 

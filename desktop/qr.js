@@ -2,15 +2,22 @@
 // one thing it carries (pair.js, pairQrText), written here so the page loads
 // no script it does not pin.
 //
-//   version 3 (29 x 29), error correction M, alphanumeric mode:
-//   up to 61 characters from 0-9 A-Z space $ % * + - . / :
-//   44 data codewords and 26 of Reed-Solomon, in one block.
+//   version 4 (33 x 33), error correction H, alphanumeric mode:
+//   up to 50 characters from 0-9 A-Z space $ % * + - . / :
+//   36 data codewords in four blocks of 9, each with 16 of Reed-Solomon.
+//
+// Level H, the strongest, because the page draws its mark over the middle of
+// the code (QR_HOLE): the modules under it are lost, and the code must read
+// without them.
 
-const SIZE = 29;
-const DATA_CODEWORDS = 44;
-const EC_CODEWORDS = 26;
+const SIZE = 33;
+const BLOCKS = 4;
+const DATA_CODEWORDS = 36;
+const EC_CODEWORDS = 16; // in each block
 const CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
-export const QR_MAX_LENGTH = 61;
+export const QR_MAX_LENGTH = 50;
+/** How many modules across the square in the middle is left clear for the mark. */
+export const QR_HOLE = 7;
 
 /** The code for [text] as rows of 0 and 1 (1 is dark), without the quiet zone around it. */
 export function qrModules(text) {
@@ -28,18 +35,39 @@ export function qrModules(text) {
   return best.modules;
 }
 
-/** An SVG path for the dark modules, one unit a module, [quiet] modules in from the edge. */
-export function qrPath(modules, quiet = 4) {
+/**
+ * An SVG path for the dark modules as dots, one unit a module, [quiet]
+ * modules in from the edge. The three finders are left to qrFinderPath, and
+ * the middle QR_HOLE modules are left clear.
+ */
+export function qrDotsPath(modules, quiet = 4) {
+  const n = modules.length;
+  const from = (n - QR_HOLE) / 2;
+  const r = 0.47;
   let d = "";
-  modules.forEach((row, y) => {
-    for (let x = 0; x < row.length; x++) {
-      if (!row[x]) continue;
-      let run = 1;
-      while (row[x + run]) run++;
-      d += `M${x + quiet} ${y + quiet}h${run}v1h-${run}z`;
-      x += run;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (!modules[y][x]) continue;
+      if ((x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7)) continue;
+      if (x >= from && x < from + QR_HOLE && y >= from && y < from + QR_HOLE) continue;
+      d += `M${x + quiet + 0.5 - r} ${y + quiet + 0.5}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0z`;
     }
-  });
+  }
+  return d;
+}
+
+/**
+ * The three finders of a code [size] modules across, their corners rounded;
+ * fill with the even-odd rule. Rounded only a little: a scanner looks for
+ * squares, and one tried here (OpenCV) lost the code past a module's radius.
+ */
+export function qrFinderPath(size, quiet = 4) {
+  const square = (x, y, w, r) =>
+    `M${x + r} ${y}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}v${w - 2 * r}a${r} ${r} 0 0 1 ${-r} ${r}h${2 * r - w}a${r} ${r} 0 0 1 ${-r} ${-r}v${2 * r - w}a${r} ${r} 0 0 1 ${r} ${-r}z`;
+  let d = "";
+  for (const [x, y] of [[0, 0], [size - 7, 0], [0, size - 7]]) {
+    d += square(x + quiet, y + quiet, 7, 0.8) + square(x + quiet + 1, y + quiet + 1, 5, 0.4) + square(x + quiet + 2, y + quiet + 2, 3, 0.35);
+  }
   return d;
 }
 
@@ -76,7 +104,22 @@ function gfMul(x, y) {
   return z;
 }
 
+/** Each block's data with its Reed-Solomon codewords, the blocks dealt out a codeword at a time. */
 function withErrorCorrection(data) {
+  const each = DATA_CODEWORDS / BLOCKS;
+  const blocks = [];
+  for (let b = 0; b < BLOCKS; b++) {
+    const part = data.subarray(b * each, (b + 1) * each);
+    blocks.push({ data: part, ec: reedSolomon(part) });
+  }
+  const out = new Uint8Array((each + EC_CODEWORDS) * BLOCKS);
+  let at = 0;
+  for (let i = 0; i < each; i++) for (const block of blocks) out[at++] = block.data[i];
+  for (let i = 0; i < EC_CODEWORDS; i++) for (const block of blocks) out[at++] = block.ec[i];
+  return out;
+}
+
+function reedSolomon(data) {
   // The generator: (x - 1)(x - 2)(x - 4)... with EC_CODEWORDS roots.
   const divisor = new Uint8Array(EC_CODEWORDS);
   divisor[EC_CODEWORDS - 1] = 1;
@@ -95,10 +138,7 @@ function withErrorCorrection(data) {
     remainder[EC_CODEWORDS - 1] = 0;
     for (let i = 0; i < EC_CODEWORDS; i++) remainder[i] ^= gfMul(divisor[i], factor);
   }
-  const out = new Uint8Array(DATA_CODEWORDS + EC_CODEWORDS);
-  out.set(data, 0);
-  out.set(remainder, DATA_CODEWORDS);
-  return out;
+  return remainder;
 }
 
 /** The finders, timing lines and alignment square, and which modules data must leave alone. */
@@ -123,9 +163,9 @@ function functionPatterns() {
       }
     }
   }
-  // Version 3 has one alignment square.
+  // Version 4 has one alignment square.
   for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) set(22 + dx, 22 + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    for (let dx = -2; dx <= 2; dx++) set(26 + dx, 26 + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
   }
   // Where the format bits go, drawn once the mask is chosen.
   for (let i = 0; i < 9; i++) {
@@ -177,9 +217,9 @@ function applyMask(modules, reserved, mask) {
   }
 }
 
-/** Error correction level M and the mask, with their own BCH code, in both places. */
+/** Error correction level H and the mask, with their own BCH code, in both places. */
 function drawFormat(modules, mask) {
-  const data = (0b00 << 3) | mask;
+  const data = (0b10 << 3) | mask;
   let rem = data;
   for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
   const bits = ((data << 10) | rem) ^ 0x5412;
