@@ -368,6 +368,10 @@
        in one centred column at every width. */
     .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); --pad-x: 26px; --pad-y: 28px; display: flex; flex-direction: column; align-items: center; width: min(420px, calc(100vw - 40px)); box-sizing: border-box; margin: 4px 0 0; padding: var(--pad-y) var(--pad-x); border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: center; }
     .pairing[hidden] { display: none; }
+    /* Frosted glass: a pale pane that blurs the page behind it, with two
+       faint lights in the accent's purple inside it. */
+    .pairing { --glass: rgba(255, 255, 255, 0.55); --glass-edge: rgba(255, 255, 255, 0.9); --glass-shine: #fff; --glass-foot: rgba(255, 255, 255, 0.35); border-color: var(--glass-edge); background: radial-gradient(60% 45% at 14% 10%, rgba(91, 61, 245, 0.26), transparent 70%), radial-gradient(55% 42% at 90% 82%, rgba(91, 61, 245, 0.22), transparent 70%), var(--glass); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18), inset 0 1px 0 var(--glass-shine); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); }
+    @media (prefers-color-scheme: dark) { .pairing { --glass: rgba(255, 255, 255, 0.06); --glass-edge: rgba(255, 255, 255, 0.14); --glass-shine: rgba(255, 255, 255, 0.16); --glass-foot: rgba(9, 10, 26, 0.3); } }
     /* The code in a viewfinder: a ring of which only the corners show. */
     .pair-frame { position: relative; flex: none; margin-top: 6px; padding: 12px; }
     .pair-frame::before { --corner: linear-gradient(#000 0 0); --arm: 34px; content: ""; position: absolute; inset: 0; border: 2px solid var(--accent); border-radius: 26px; pointer-events: none; -webkit-mask: var(--corner) 0 0 / var(--arm) var(--arm) no-repeat, var(--corner) 100% 0 / var(--arm) var(--arm) no-repeat, var(--corner) 0 100% / var(--arm) var(--arm) no-repeat, var(--corner) 100% 100% / var(--arm) var(--arm) no-repeat; mask: var(--corner) 0 0 / var(--arm) var(--arm) no-repeat, var(--corner) 100% 0 / var(--arm) var(--arm) no-repeat, var(--corner) 0 100% / var(--arm) var(--arm) no-repeat, var(--corner) 100% 100% / var(--arm) var(--arm) no-repeat; }
@@ -400,10 +404,13 @@
     .pairing:is([data-stage="receive"], [data-stage="error"]) .pair-title { display: none; }
     .pairing[data-stage="scanned"] .pair-tick { display: block; }
     .pairing:not([data-stage="code"]) .pair-timer-row { justify-content: center; }
-    /* Cancel as a pill in the accent, like Send to Captry, and larger. */
-    #pair-cancel { margin-top: 10px; padding: 12px 30px; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 16px; font-weight: 650; box-shadow: 0 2px 8px rgba(91, 61, 245, 0.25); }
+    /* Cancel in the dress of Pair with your phone, at a smaller size. */
+    #pair-cancel { margin-top: 10px; padding: 12px 30px; border: 0; border-radius: 16px; background: linear-gradient(135deg, #7c5cff 0%, #5b3df5 45%, #2f5bff 100%); color: #fff; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; box-shadow: 0 6px 20px rgba(91, 61, 245, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25); transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease; }
+    #pair-cancel:hover { transform: translateY(-1px); box-shadow: 0 9px 24px rgba(91, 61, 245, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25); filter: brightness(1.06); }
+    #pair-cancel:active { transform: translateY(0); }
+    @media (prefers-reduced-motion: reduce) { #pair-cancel { transition: none; } #pair-cancel:hover { transform: none; } }
     /* Under the code: the name the phone will show for this computer. */
-    .pair-foot { align-self: stretch; display: flex; flex-direction: column; gap: 8px; margin: 24px calc(-1 * var(--pad-x)) calc(-1 * var(--pad-y)); padding: 14px var(--pad-x) 16px; border-top: 1px solid var(--line); border-radius: 0 0 19px 19px; background: color-mix(in srgb, var(--well) 55%, var(--paper)); list-style: none; color: var(--muted); font-size: 13px; line-height: 1.4; text-align: left; }
+    .pair-foot { align-self: stretch; display: flex; flex-direction: column; gap: 8px; margin: 24px calc(-1 * var(--pad-x)) calc(-1 * var(--pad-y)); padding: 14px var(--pad-x) 16px; border-top: 1px solid var(--glass-edge); border-radius: 0 0 19px 19px; background: var(--glass-foot); list-style: none; color: var(--muted); font-size: 13px; line-height: 1.4; text-align: left; }
     .pair-foot li { display: flex; align-items: flex-start; gap: 8px; }
     .pair-foot svg { flex: none; width: 16px; height: 16px; margin-top: 1px; color: var(--accent); }
     @media (max-width: 460px) { .pairing { --pad-x: 16px; --pad-y: 24px; } .pair-qr { width: 200px; height: 200px; } .pairing[data-stage="code"] .pair-timer { width: 224px; } }
@@ -1073,17 +1080,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=63": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=63": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=63": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=63": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=63": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
-        "/desktop/relay.js?v=63": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=63": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=63": "sha384-d63oDkQsmDCjCzO3k37peWxGfMV7z4nqdX76r9npGLEtfMGlr2NO2PTBRaIY26n4"
+        "/desktop/library-format.js?v=64": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=64": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=64": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=64": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=64": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
+        "/desktop/relay.js?v=64": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=64": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=64": "sha384-+rqgCseO3KKzK+1RZEPIYcZ1WXeU/Z1TYqMhHyNAW2sUGxOcBqToAi17YFfMxhrw"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=63" integrity="sha384-d63oDkQsmDCjCzO3k37peWxGfMV7z4nqdX76r9npGLEtfMGlr2NO2PTBRaIY26n4"></script>
+  <script type="module" src="./viewer.js?v=64" integrity="sha384-+rqgCseO3KKzK+1RZEPIYcZ1WXeU/Z1TYqMhHyNAW2sUGxOcBqToAi17YFfMxhrw"></script>
 </body>
 </html>
