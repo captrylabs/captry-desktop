@@ -93,7 +93,9 @@
     .hero { position: relative; width: min(100%, 520px); display: flex; flex-direction: column; align-items: center; text-align: center; }
     #opener h1 { font-size: clamp(30px, 6vw, 42px); font-weight: 650; letter-spacing: -0.035em; line-height: 1.08; margin: 0 0 12px; }
     #opener p { color: var(--muted); margin: 0 0 20px; }
-    #opener .lede { font-size: 18px; margin-bottom: 32px; }
+    /* As much room over the button or the pairing card as there is under
+       them, down to the card below: 72px, less the slack under this line's letters. */
+    #opener .lede { font-size: 18px; margin-bottom: 66px; }
     .pair-button {
       display: inline-flex; align-items: center; justify-content: center; gap: 10px;
       width: min(100%, 340px); padding: 17px 28px; border: 0; border-radius: 16px;
@@ -128,8 +130,6 @@
     #again:not([hidden]) ~ .pair-button { width: auto; padding: 10px 18px; font-size: 15px; font-weight: 600; background: transparent; color: var(--ink); border: 1px solid var(--line); box-shadow: none; filter: none; }
     #again:not([hidden]) ~ .pair-button svg { width: 18px; height: 18px; }
     #again:not([hidden]) ~ .pair-button:hover { background: var(--well); transform: none; }
-    /* The card below sits a little closer to this one than to the rest. */
-    .start-card:not([hidden]) ~ .tool-card { margin-top: 20px; }
     #again:not([hidden]) ~ .start-card .steps { display: none; }
     #again:not([hidden]) ~ .start-card .remember { border-top: 0; }
     .tool-card { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 48px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--well) 85%, transparent); text-align: left; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
@@ -380,7 +380,7 @@
 
     /* Pairing: where on the phone to scan from, then the QR code to scan,
        in one centred column at every width. */
-    .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); --pad-x: 26px; --pad-y: 28px; display: flex; flex-direction: column; align-items: center; width: min(420px, calc(100vw - 40px)); box-sizing: border-box; margin: 4px 0 0; padding: var(--pad-y) var(--pad-x); border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: center; }
+    .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); --pad-x: 26px; --pad-y: 28px; display: flex; flex-direction: column; align-items: center; width: min(420px, calc(100vw - 40px)); box-sizing: border-box; margin: 0; padding: var(--pad-y) var(--pad-x); border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: center; }
     .pairing[hidden] { display: none; }
     /* Frosted glass: a pale pane that blurs the page behind it, with two
        faint lights in the accent's purple inside it. */
@@ -1096,17 +1096,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=65": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=65": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=65": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=65": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=65": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
-        "/desktop/relay.js?v=65": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=65": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=65": "sha384-kABxIhBzLW5dxf4xBzt5Ps9YHLzbG9No935Id9AlJnzRQ/KVyMMxPBXXututjLDQ"
+        "/desktop/library-format.js?v=66": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=66": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=66": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=66": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=66": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
+        "/desktop/relay.js?v=66": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=66": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=66": "sha384-iGcCdCSetcK34kVHVliA4i1iiTCpBmJkREwe5i6WZmNFOObrKQCEdSJhZo+5puC1"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=65" integrity="sha384-kABxIhBzLW5dxf4xBzt5Ps9YHLzbG9No935Id9AlJnzRQ/KVyMMxPBXXututjLDQ"></script>
+  <script type="module" src="./viewer.js?v=66" integrity="sha384-iGcCdCSetcK34kVHVliA4i1iiTCpBmJkREwe5i6WZmNFOObrKQCEdSJhZo+5puC1"></script>
 </body>
 </html>
