@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=62";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=63";
 import {
   FILTERS,
   RANGES,
@@ -28,12 +28,12 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=62";
-import * as lines from "./list-lines.js?v=62";
-import * as store from "./store.js?v=62";
-import * as relay from "./relay.js?v=62";
-import * as pair from "./pair.js?v=62";
-import { qrModules, qrDotsPath, qrFinderPath, QR_HOLE } from "./qr.js?v=62";
+} from "./library.js?v=63";
+import * as lines from "./list-lines.js?v=63";
+import * as store from "./store.js?v=63";
+import * as relay from "./relay.js?v=63";
+import * as pair from "./pair.js?v=63";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=63";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -293,15 +293,6 @@ function showPairCode(code, secret) {
   };
   const svg = make("svg", { viewBox: `0 0 ${across} ${across}` });
   svg.append(make("path", { d: qrDotsPath(modules, quiet) }), make("path", { d: qrFinderPath(modules.length, quiet), "fill-rule": "evenodd" }));
-  // Captry's mark, in the square the code leaves clear for it.
-  const side = QR_HOLE - 1;
-  const at = (across - side) / 2;
-  const mark = make("svg", { x: at + 0.9, y: at + 0.9, width: side - 1.8, height: side - 1.8, viewBox: "30.544 30.544 46.912 46.912", fill: "none", stroke: "#fff", "stroke-linecap": "round" });
-  mark.append(
-    make("path", { d: "M54 33.96L54 74.04M71.355 43.98L36.645 64.02M71.355 64.02L36.645 43.98", "stroke-width": 1.451 }),
-    make("path", { d: "M70.571 42.183Q72.519 43.308 72.519 45.558L72.519 62.442Q72.519 64.692 70.571 65.817L55.949 74.259Q54 75.384 52.051 74.259L37.429 65.817Q35.481 64.692 35.481 62.442L35.481 45.558Q35.481 43.308 37.429 42.183L52.051 33.741Q54 32.616 55.949 33.741Z", "stroke-width": 2.232, "stroke-linejoin": "round" }),
-  );
-  svg.append(make("rect", { x: at, y: at, width: side, height: side, rx: 1.6, fill: "#5b3df5" }), mark);
   pairEl.qr.append(svg);
 }
 

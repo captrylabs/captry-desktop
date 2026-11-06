@@ -6,9 +6,9 @@
 //   up to 50 characters from 0-9 A-Z space $ % * + - . / :
 //   36 data codewords in four blocks of 9, each with 16 of Reed-Solomon.
 //
-// Level H, the strongest, because the page draws its mark over the middle of
-// the code (QR_HOLE): the modules under it are lost, and the code must read
-// without them.
+// Level H, the strongest: the page draws the code in dots, which leave a
+// scanner less to go on than squares, and a third of it can be lost to glare
+// or a smudge and it still reads.
 
 const SIZE = 33;
 const BLOCKS = 4;
@@ -16,8 +16,6 @@ const DATA_CODEWORDS = 36;
 const EC_CODEWORDS = 16; // in each block
 const CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
 export const QR_MAX_LENGTH = 50;
-/** How many modules across the square in the middle is left clear for the mark. */
-export const QR_HOLE = 7;
 
 /** The code for [text] as rows of 0 and 1 (1 is dark), without the quiet zone around it. */
 export function qrModules(text) {
@@ -37,19 +35,16 @@ export function qrModules(text) {
 
 /**
  * An SVG path for the dark modules as dots, one unit a module, [quiet]
- * modules in from the edge. The three finders are left to qrFinderPath, and
- * the middle QR_HOLE modules are left clear.
+ * modules in from the edge. The three finders are left to qrFinderPath.
  */
 export function qrDotsPath(modules, quiet = 4) {
   const n = modules.length;
-  const from = (n - QR_HOLE) / 2;
   const r = 0.47;
   let d = "";
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       if (!modules[y][x]) continue;
       if ((x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7)) continue;
-      if (x >= from && x < from + QR_HOLE && y >= from && y < from + QR_HOLE) continue;
       d += `M${x + quiet + 0.5 - r} ${y + quiet + 0.5}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0z`;
     }
   }
