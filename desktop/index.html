@@ -107,27 +107,41 @@
     .pair-button:active { transform: translateY(0); }
     .pair-button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
     @media (prefers-reduced-motion: reduce) { .pair-button { transition: none; } .pair-button:hover { transform: none; } }
-    .steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; list-style: none; margin: 22px 0 0; padding: 0; color: var(--muted); font-size: 14px; }
-    .steps li { display: inline-flex; align-items: center; gap: 8px; }
-    .remember { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 16px 0 0; color: var(--muted); font-size: 14px; cursor: pointer; }
-    .remember[hidden] { display: none; }
-    .remember input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
-    .steps span { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--well); border: 1px solid var(--line); color: var(--ink); font-size: 12px; font-weight: 650; }
+    /* Under the button, a glass card as wide as it: the steps, centred as a
+       block as wide as the longest, and Remember this computer as a switch
+       along its foot. */
+    .start-card { width: min(100%, 340px); margin-top: 40px; border: 1px solid var(--start-edge); border-radius: 16px; background: var(--glass); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), inset 0 1px 0 var(--glass-shine); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); overflow: hidden; text-align: left; }
+    .steps { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 16px; width: fit-content; max-width: 100%; list-style: none; margin: 0 auto; padding: 30px 24px 24px; color: var(--muted); font-size: 16px; }
+    .steps li { display: inline-flex; align-items: center; gap: 14px; }
+    /* A line joins the numbers, and the first step is lit: it is the one to do now. */
+    .steps::before { content: ""; position: absolute; left: 35.5px; top: 42px; bottom: 36px; width: 1px; background: color-mix(in srgb, var(--muted) 45%, transparent); }
+    .steps li:first-child { color: var(--ink); }
+    .steps li:first-child span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+    .remember { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 24px; border-top: 1px solid var(--start-edge); background: var(--start-foot); color: var(--muted); font-size: 14px; cursor: pointer; }
+    .remember input { flex: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 999px; background: color-mix(in srgb, var(--muted) 45%, transparent); cursor: pointer; -webkit-appearance: none; appearance: none; transition: background 0.15s ease; }
+    .remember input::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.15s ease; }
+    .remember input:checked { background: var(--accent); }
+    .remember input:checked::after { transform: translateX(14px); background: var(--accent-ink); }
+    @media (prefers-reduced-motion: reduce) { .remember input, .remember input::after { transition: none; } }
+    .steps span { position: relative; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--well); border: 1px solid var(--line); color: var(--ink); font-size: 13px; font-weight: 650; }
     /* Already paired: Open leads, and pairing again steps back. */
     #again:not([hidden]) ~ .pair-button { width: auto; padding: 10px 18px; font-size: 15px; font-weight: 600; background: transparent; color: var(--ink); border: 1px solid var(--line); box-shadow: none; filter: none; }
     #again:not([hidden]) ~ .pair-button svg { width: 18px; height: 18px; }
     #again:not([hidden]) ~ .pair-button:hover { background: var(--well); transform: none; }
-    #again:not([hidden]) ~ .steps { display: none; }
+    /* The card below sits a little closer to this one than to the rest. */
+    .start-card:not([hidden]) ~ .tool-card { margin-top: 20px; }
+    #again:not([hidden]) ~ .start-card .steps { display: none; }
+    #again:not([hidden]) ~ .start-card .remember { border-top: 0; }
     .tool-card { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 48px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--well) 85%, transparent); text-align: left; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
     .tool-icon { flex: none; width: 26px; height: 26px; color: var(--accent); }
     .tool-text { flex: 1; min-width: 0; }
     .tool-title { font-weight: 600; }
     .tool-hint { color: var(--muted); font-size: 14px; }
-    #opener .assure { margin: 24px 0 0; font-size: 14px; line-height: 1.6; }
+    #opener .assure { margin: 36px 0 0; font-size: 14px; line-height: 1.6; }
     #opener .assure svg { width: 15px; height: 15px; vertical-align: -2px; margin-right: 4px; }
     #opener .assure a { color: var(--accent); }
     #opener #status:empty, #opener #not-loaded { margin: 0; }
-    @media (max-width: 520px) { .steps { flex-direction: column; align-items: flex-start; gap: 10px; } .tool-card { flex-wrap: wrap; } .tool-text { flex: 1 1 calc(100% - 50px); } .bookmarklet { margin-left: 40px; } }
+    @media (max-width: 520px) { .tool-card { flex-wrap: wrap; } .tool-text { flex: 1 1 calc(100% - 50px); } .bookmarklet { margin-left: 40px; } }
     .button, button.button, label.button {
       display: inline-flex;
       align-items: center;
@@ -370,8 +384,9 @@
     .pairing[hidden] { display: none; }
     /* Frosted glass: a pale pane that blurs the page behind it, with two
        faint lights in the accent's purple inside it. */
-    .pairing { --glass: rgba(255, 255, 255, 0.55); --glass-edge: rgba(255, 255, 255, 0.9); --glass-shine: #fff; --glass-foot: rgba(255, 255, 255, 0.35); border-color: var(--glass-edge); background: radial-gradient(60% 45% at 14% 10%, rgba(91, 61, 245, 0.26), transparent 70%), radial-gradient(55% 42% at 90% 82%, rgba(91, 61, 245, 0.22), transparent 70%), var(--glass); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18), inset 0 1px 0 var(--glass-shine); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); }
-    @media (prefers-color-scheme: dark) { .pairing { --glass: rgba(255, 255, 255, 0.06); --glass-edge: rgba(255, 255, 255, 0.14); --glass-shine: rgba(255, 255, 255, 0.16); --glass-foot: rgba(9, 10, 26, 0.3); } }
+    .pairing, .start-card { --glass: rgba(255, 255, 255, 0.55); --glass-edge: rgba(255, 255, 255, 0.9); --glass-shine: #fff; --glass-foot: rgba(255, 255, 255, 0.35); --start-edge: var(--line); --start-foot: color-mix(in srgb, var(--well) 70%, transparent); }
+    .pairing { border-color: var(--glass-edge); background: radial-gradient(60% 45% at 14% 10%, rgba(91, 61, 245, 0.26), transparent 70%), radial-gradient(55% 42% at 90% 82%, rgba(91, 61, 245, 0.22), transparent 70%), var(--glass); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18), inset 0 1px 0 var(--glass-shine); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); }
+    @media (prefers-color-scheme: dark) { .pairing, .start-card { --glass: rgba(255, 255, 255, 0.06); --glass-edge: rgba(255, 255, 255, 0.14); --glass-shine: rgba(255, 255, 255, 0.16); --glass-foot: rgba(9, 10, 26, 0.3); --start-edge: var(--glass-edge); --start-foot: var(--glass-foot); } }
     /* The code in a viewfinder: a ring of which only the corners show. */
     .pair-frame { position: relative; flex: none; margin-top: 6px; padding: 12px; }
     .pair-frame::before { --corner: linear-gradient(#000 0 0); --arm: 34px; content: ""; position: absolute; inset: 0; border: 2px solid var(--accent); border-radius: 26px; pointer-events: none; -webkit-mask: var(--corner) 0 0 / var(--arm) var(--arm) no-repeat, var(--corner) 100% 0 / var(--arm) var(--arm) no-repeat, var(--corner) 0 100% / var(--arm) var(--arm) no-repeat, var(--corner) 100% 100% / var(--arm) var(--arm) no-repeat; mask: var(--corner) 0 0 / var(--arm) var(--arm) no-repeat, var(--corner) 100% 0 / var(--arm) var(--arm) no-repeat, var(--corner) 0 100% / var(--arm) var(--arm) no-repeat, var(--corner) 100% 100% / var(--arm) var(--arm) no-repeat; }
@@ -836,16 +851,17 @@
           Pair with your phone
         </button>
 
-        <ol class="steps" id="steps">
-          <li><span>1</span>Open Captry on your phone</li>
-          <li><span>2</span>Scan the code</li>
-          <li><span>3</span>Tap Pair</li>
-        </ol>
-
-        <label class="remember" title="Turn off on a shared computer. Nothing is kept after you close the tab.">
-          <input id="remember-computer" type="checkbox" checked>
-          Remember this computer
-        </label>
+        <div id="start-card" class="start-card">
+          <ol class="steps" id="steps">
+            <li><span>1</span>Open Captry on your phone</li>
+            <li><span>2</span>Scan the code</li>
+            <li><span>3</span>Tap Pair</li>
+          </ol>
+          <label class="remember" title="Turn off on a shared computer. Nothing is kept after you close the tab.">
+            Remember this computer
+            <input id="remember-computer" type="checkbox" role="switch" checked>
+          </label>
+        </div>
 
         <section id="pairing" class="pairing" data-stage="code" hidden>
           <div class="pair-main">
@@ -886,7 +902,7 @@
 
         <p class="assure">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
-          End-to-end encrypted. Captry's server can't read your captures. <a href="../privacy/">Privacy</a>
+          End-to-end encrypted. Captry's server can't read your captures.<br><a href="../privacy/">Privacy Policy</a>
         </p>
       </div>
     </section>
@@ -1080,17 +1096,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=64": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=64": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=64": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=64": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=64": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
-        "/desktop/relay.js?v=64": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=64": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=64": "sha384-+rqgCseO3KKzK+1RZEPIYcZ1WXeU/Z1TYqMhHyNAW2sUGxOcBqToAi17YFfMxhrw"
+        "/desktop/library-format.js?v=65": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=65": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=65": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=65": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=65": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
+        "/desktop/relay.js?v=65": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=65": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=65": "sha384-kABxIhBzLW5dxf4xBzt5Ps9YHLzbG9No935Id9AlJnzRQ/KVyMMxPBXXututjLDQ"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=64" integrity="sha384-+rqgCseO3KKzK+1RZEPIYcZ1WXeU/Z1TYqMhHyNAW2sUGxOcBqToAi17YFfMxhrw"></script>
+  <script type="module" src="./viewer.js?v=65" integrity="sha384-kABxIhBzLW5dxf4xBzt5Ps9YHLzbG9No935Id9AlJnzRQ/KVyMMxPBXXututjLDQ"></script>
 </body>
 </html>

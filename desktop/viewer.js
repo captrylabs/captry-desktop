@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=64";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=65";
 import {
   FILTERS,
   RANGES,
@@ -28,12 +28,12 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=64";
-import * as lines from "./list-lines.js?v=64";
-import * as store from "./store.js?v=64";
-import * as relay from "./relay.js?v=64";
-import * as pair from "./pair.js?v=64";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=64";
+} from "./library.js?v=65";
+import * as lines from "./list-lines.js?v=65";
+import * as store from "./store.js?v=65";
+import * as relay from "./relay.js?v=65";
+import * as pair from "./pair.js?v=65";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=65";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -255,6 +255,8 @@ let playing = null;
 
 // Remember this computer: on by default. Off, as on a shared computer,
 // nothing about the pairing is kept once the tab is closed.
+// The steps and Remember this computer, in one card under the button.
+const startCard = document.getElementById("start-card");
 const rememberBox = document.getElementById("remember-computer");
 rememberBox.checked = remembered("rememberComputer", "1") === "1";
 rememberBox.addEventListener("change", () => remember("rememberComputer", rememberBox.checked ? "1" : "0"));
@@ -323,14 +325,12 @@ pairEl.cancel.addEventListener("click", () => {
   showPairCode(null);
   pairEl.panel.hidden = true;
   pairEl.start.hidden = false;
-  document.getElementById("steps").hidden = false;
-  rememberBox.parentElement.hidden = false;
+  startCard.hidden = false;
 });
 
 async function startPairing() {
   pairEl.start.hidden = true;
-  document.getElementById("steps").hidden = true;
-  rememberBox.parentElement.hidden = true;
+  startCard.hidden = true;
   pairEl.panel.hidden = false;
   pairEl.panel.dataset.stage = "code";
   pairEl.title.textContent = "Scan this with your phone";
@@ -468,8 +468,7 @@ async function startPairing() {
     if (session.code) relay.pairDone(session.code, session.pageToken);
     pairing = null;
     pairEl.start.hidden = false;
-    document.getElementById("steps").hidden = false;
-  rememberBox.parentElement.hidden = false;
+    startCard.hidden = false;
   }
 }
 
