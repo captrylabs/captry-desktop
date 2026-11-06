@@ -364,18 +364,18 @@
     .skeleton-row .s-lines { flex: 1; display: flex; flex-direction: column; gap: 7px; padding-top: 3px; }
     .skeleton-row .s-line { height: 11px; }
 
-    /* Pairing: the QR code to scan, and where on the phone to scan it from.
-       Wider than the column around it while the code is up. */
-    .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); display: flex; align-items: center; gap: 36px; width: min(720px, calc(100vw - 40px)); box-sizing: border-box; margin: 4px 0 0; padding: 34px 36px; border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: left; }
+    /* Pairing: where on the phone to scan from, then the QR code to scan,
+       in one centred column at every width. */
+    .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); display: flex; width: min(460px, calc(100vw - 40px)); box-sizing: border-box; margin: 4px 0 0; padding: 28px 22px; border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: center; }
     .pairing[hidden] { display: none; }
     /* White in both themes: a scanner wants dark on light. */
     .pair-qr { flex: none; width: 216px; height: 216px; box-sizing: border-box; padding: 6px; border-radius: 16px; background: #fff; color: #000; }
     .pair-qr:empty { border: 1px solid var(--pair-edge); background: var(--paper); }
     .pair-qr svg { display: block; width: 100%; height: 100%; fill: currentColor; }
-    .pair-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 18px; }
+    .pair-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 20px; }
     .pair-tick { display: none; width: 44px; height: 44px; color: var(--accent); }
     .pair-title { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
-    .pair-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
+    .pair-path { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
     .pair-path li { display: flex; align-items: center; gap: 6px; }
     .pair-path li:first-child, .pair-path span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--pair-edge); border-radius: 999px; }
     .pair-path li:first-child svg { width: 15px; height: 15px; }
@@ -388,14 +388,12 @@
     .pair-bar > div { width: 100%; height: 100%; background: var(--accent); transition: width 1s linear; }
     @media (prefers-reduced-motion: reduce) { .pair-bar > div { transition: none; } }
     /* Once the phone has scanned, only what the step needs, centred. */
-    .pairing:not([data-stage="code"]) { width: 100%; padding: 28px 20px; text-align: center; }
-    .pairing:not([data-stage="code"]) .pair-main { align-items: center; gap: 12px; }
+    .pairing:not([data-stage="code"]) { width: 100%; padding: 28px 20px; }
+    .pairing:not([data-stage="code"]) .pair-main { gap: 12px; }
     .pairing:not([data-stage="code"]) :is(.pair-qr, .pair-path, #pair-left, .pair-bar) { display: none; }
     .pairing:is([data-stage="receive"], [data-stage="error"]) .pair-title { display: none; }
     .pairing[data-stage="scanned"] .pair-tick { display: block; }
     .pairing:not([data-stage="code"]) .pair-timer-row { justify-content: center; }
-    /* Narrow: the code on top, and everything centred under it. */
-    @media (max-width: 760px) { .pairing { flex-direction: column; gap: 22px; padding: 28px 22px; text-align: center; } .pair-main { align-self: stretch; align-items: center; } .pair-path { justify-content: center; } }
     @media (max-width: 460px) { .pairing { padding: 24px 16px; } .pair-qr { width: 200px; height: 200px; } }
     .pair-progress { width: 100%; height: 8px; border-radius: 4px; background: var(--paper); overflow: hidden; margin: 6px auto 14px; max-width: 320px; }
     .pair-progress > div { height: 100%; width: 0; background: var(--accent); transition: width 0.3s; }
@@ -831,7 +829,6 @@
         </label>
 
         <section id="pairing" class="pairing" data-stage="code" hidden>
-          <div id="pair-qr" class="pair-qr" role="img" aria-label="QR code to scan with Captry on your phone"></div>
           <div class="pair-main">
             <svg class="pair-tick" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5" stroke-width="1.7"/><path d="M7.6 12.4l3 3 5.8-6.3" stroke-width="2"/></g></svg>
             <h2 id="pair-title" class="pair-title">Scan this with your phone</h2>
@@ -840,6 +837,7 @@
               <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Network</span></li>
               <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="here">Pair a computer</span></li>
             </ol>
+            <div id="pair-qr" class="pair-qr" role="img" aria-label="QR code to scan with Captry on your phone"></div>
             <div class="pair-timer">
               <div class="pair-timer-row"><span id="pair-status" aria-live="polite"></span><span id="pair-left"></span></div>
               <div id="pair-bar" class="pair-bar"><div></div></div>
@@ -1060,17 +1058,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=58": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=58": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=58": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=58": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=58": "sha384-2zTEjasdWOtoWhn8OGrjs0W/VPWTDhizrwvnH358rPCUpqkJlnXwmVF5h0Uk0TzX",
-        "/desktop/relay.js?v=58": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=58": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=58": "sha384-s7ec0rkrByUMkz8nFskcGeIpLxFVS73ke0w2Wb25dMY8oBqlalsz/Vt95VCBTtZP"
+        "/desktop/library-format.js?v=59": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=59": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=59": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=59": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=59": "sha384-2zTEjasdWOtoWhn8OGrjs0W/VPWTDhizrwvnH358rPCUpqkJlnXwmVF5h0Uk0TzX",
+        "/desktop/relay.js?v=59": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=59": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=59": "sha384-DwxgRrMcqgxwjdpOaFMH3jZEKKEPXT4nPWqZDdXjCUu8WOcEDMJTcEcW7iMFLeaP"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=58" integrity="sha384-s7ec0rkrByUMkz8nFskcGeIpLxFVS73ke0w2Wb25dMY8oBqlalsz/Vt95VCBTtZP"></script>
+  <script type="module" src="./viewer.js?v=59" integrity="sha384-DwxgRrMcqgxwjdpOaFMH3jZEKKEPXT4nPWqZDdXjCUu8WOcEDMJTcEcW7iMFLeaP"></script>
 </body>
 </html>
