@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=69";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=70";
 import {
   FILTERS,
   RANGES,
@@ -28,12 +28,12 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=69";
-import * as lines from "./list-lines.js?v=69";
-import * as store from "./store.js?v=69";
-import * as relay from "./relay.js?v=69";
-import * as pair from "./pair.js?v=69";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=69";
+} from "./library.js?v=70";
+import * as lines from "./list-lines.js?v=70";
+import * as store from "./store.js?v=70";
+import * as relay from "./relay.js?v=70";
+import * as pair from "./pair.js?v=70";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=70";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -655,7 +655,7 @@ unlinkDialog.addEventListener("close", async () => {
   await store.forget();
   sentItems = [];
   el.again.hidden = true;
-  say("Unlinked. Pair again to use Captry here.");
+  say("Unlinked. Pair again to use Captry here.", "warn");
 });
 
 async function sha256Hex(bytes) {
