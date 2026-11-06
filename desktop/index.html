@@ -132,7 +132,7 @@
     #again:not([hidden]) ~ .pair-button:hover { background: var(--well); transform: none; }
     #again:not([hidden]) ~ .start-card .steps { display: none; }
     #again:not([hidden]) ~ .start-card .remember { border-top: 0; }
-    .tool-card { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 48px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--well) 85%, transparent); text-align: left; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+    .tool-card { display: flex; align-items: center; gap: 14px; width: 100%; margin-top: 72px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--well) 85%, transparent); text-align: left; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
     .tool-icon { flex: none; width: 26px; height: 26px; color: var(--accent); }
     .tool-text { flex: 1; min-width: 0; }
     .tool-title { font-weight: 600; }
@@ -140,7 +140,13 @@
     #opener .assure { margin: 66px 0 0; font-size: 14px; line-height: 1.6; }
     #opener .assure svg { width: 15px; height: 15px; vertical-align: -2px; margin-right: 4px; }
     #opener .assure a { color: var(--accent); }
-    #opener #status:empty, #opener #not-loaded { margin: 0; }
+    #opener #not-loaded { margin: 0; }
+    /* What just happened here (unlinked, forgotten, or why a saved library
+       would not open), as a note over the button, in the room the subtitle leaves. */
+    #opener #status { --note: var(--accent); display: flex; align-items: center; gap: 12px; min-height: 0; max-width: 100%; margin: -40px 0 28px; padding: 10px 18px 10px 16px; border: 1px solid color-mix(in srgb, var(--note) 60%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--note) 16%, var(--paper)); color: var(--ink); font-size: 15px; font-weight: 600; line-height: 1.4; text-align: left; }
+    #opener #status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--note); box-shadow: 0 0 0 4px color-mix(in srgb, var(--note) 28%, transparent); }
+    #opener #status.warn { --note: var(--warn); }
+    #opener #status:empty { display: none; }
     @media (max-width: 520px) { .tool-card { flex-wrap: wrap; } .tool-text { flex: 1 1 calc(100% - 50px); } .bookmarklet { margin-left: 40px; } }
     .button, button.button, label.button {
       display: inline-flex;
@@ -385,7 +391,7 @@
     /* While pairing, the bookmarklet's card steps aside, and the line under
        it keeps the room that card had under the pairing card. */
     .pairing:not([hidden]) ~ .tool-card { display: none; }
-    #opener .pairing:not([hidden]) ~ .assure { margin-top: 48px; }
+    #opener .pairing:not([hidden]) ~ .assure { margin-top: 72px; }
     /* Frosted glass: a pale pane that blurs the page behind it, with two
        faint lights in the accent's purple inside it. */
     .pairing, .start-card { --glass: rgba(255, 255, 255, 0.55); --glass-edge: rgba(255, 255, 255, 0.9); --glass-shine: #fff; --glass-foot: rgba(255, 255, 255, 0.35); --start-edge: var(--line); --start-foot: color-mix(in srgb, var(--well) 70%, transparent); }
@@ -838,6 +844,7 @@
       <div class="hero">
         <h1>Captry on your computer</h1>
         <p class="lede">Read, search and send captures from here.</p>
+        <p id="status" aria-live="polite"></p>
 
         <div id="again" class="again" hidden>
           <div class="again-text">
@@ -889,7 +896,6 @@
           </ul>
         </section>
 
-        <p id="status" aria-live="polite"></p>
         <p id="not-loaded">The page did not finish loading. Reload it, with Ctrl+Shift+R or Cmd+Shift+R to skip the cache.</p>
 
         <div class="tool-card">
@@ -1100,17 +1106,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=68": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=68": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=68": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=68": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=68": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
-        "/desktop/relay.js?v=68": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=68": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=68": "sha384-41NOEeJFz6S6xWjNSwc7sEXOHC8soPo/WpaXTFhyhmDrUPVt/wvf0tm5iAzl6qgh"
+        "/desktop/library-format.js?v=69": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=69": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=69": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=69": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=69": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
+        "/desktop/relay.js?v=69": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=69": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=69": "sha384-Gm5fxQs9QUpA/lC5zf4G880PtFDBxy5jleqLX8igt/a0DMlFl6RBUdxUQ8BDdQ2x"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=68" integrity="sha384-41NOEeJFz6S6xWjNSwc7sEXOHC8soPo/WpaXTFhyhmDrUPVt/wvf0tm5iAzl6qgh"></script>
+  <script type="module" src="./viewer.js?v=69" integrity="sha384-Gm5fxQs9QUpA/lC5zf4G880PtFDBxy5jleqLX8igt/a0DMlFl6RBUdxUQ8BDdQ2x"></script>
 </body>
 </html>
