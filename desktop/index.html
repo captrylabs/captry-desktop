@@ -369,7 +369,7 @@
     .pairing { --pair-edge: color-mix(in srgb, var(--line) 85%, var(--muted)); display: flex; justify-content: center; width: min(420px, calc(100vw - 40px)); box-sizing: border-box; margin: 4px 0 0; padding: 28px 26px; border: 1px solid var(--line); border-radius: 20px; background: var(--well); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); text-align: center; }
     .pairing[hidden] { display: none; }
     /* White in both themes: a scanner wants dark on light. */
-    .pair-qr { flex: none; width: 216px; height: 216px; box-sizing: border-box; padding: 6px; border-radius: 16px; background: #fff; color: #000; }
+    .pair-qr { flex: none; width: 216px; height: 216px; box-sizing: border-box; margin-top: 6px; padding: 6px; border-radius: 16px; background: #fff; color: #000; }
     .pair-qr:empty { border: 1px solid var(--pair-edge); background: var(--paper); }
     .pair-qr svg { display: block; width: 100%; height: 100%; fill: currentColor; }
     /* As wide as the path above the code, so the timer under it lines up. */
@@ -1061,17 +1061,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=60": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=60": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=60": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=60": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=60": "sha384-2zTEjasdWOtoWhn8OGrjs0W/VPWTDhizrwvnH358rPCUpqkJlnXwmVF5h0Uk0TzX",
-        "/desktop/relay.js?v=60": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=60": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=60": "sha384-+t5uTuHj1XxaRd4UI+cZMetD4f9UI0DHiRRV1pXDaaNITBwUoc++p0gV5r+d71hF"
+        "/desktop/library-format.js?v=61": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=61": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=61": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=61": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=61": "sha384-2zTEjasdWOtoWhn8OGrjs0W/VPWTDhizrwvnH358rPCUpqkJlnXwmVF5h0Uk0TzX",
+        "/desktop/relay.js?v=61": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=61": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=61": "sha384-OJYZ90WHXmo33y4KGfs6Lj920d9qdk3SPeJ+Gv3CURe/c7NcM2ExlHjfXrMBMOka"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=60" integrity="sha384-+t5uTuHj1XxaRd4UI+cZMetD4f9UI0DHiRRV1pXDaaNITBwUoc++p0gV5r+d71hF"></script>
+  <script type="module" src="./viewer.js?v=61" integrity="sha384-OJYZ90WHXmo33y4KGfs6Lj920d9qdk3SPeJ+Gv3CURe/c7NcM2ExlHjfXrMBMOka"></script>
 </body>
 </html>
