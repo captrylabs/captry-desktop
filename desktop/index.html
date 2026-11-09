@@ -84,14 +84,18 @@
 
     /* The opening screen: one centred column over a soft glow in the
        landing page's colours. */
-    #opener { position: relative; flex: 1 0 auto; display: grid; place-items: center; padding: 56px 20px 64px; overflow: hidden; }
+    /* On the opening screen the header floats over the page with no rule under
+       it, so the glow runs up to the top of the window. The extra 61px on top
+       is the header's height: the column stays where it was. */
+    body:has(#opener:not([hidden])) header { position: absolute; top: 0; left: 0; right: 0; z-index: 1; border-bottom: 0; }
+    #opener { position: relative; flex: 1 0 auto; display: grid; place-items: center; padding: 117px 20px 64px; overflow: hidden; }
     .hero-glow { position: absolute; inset: -20% -10% auto; height: 70%; pointer-events: none; opacity: 0.55;
       background: radial-gradient(40% 55% at 50% 35%, rgba(152, 67, 255, 0.35), transparent 70%),
                   radial-gradient(30% 45% at 30% 30%, rgba(41, 67, 254, 0.28), transparent 70%),
                   radial-gradient(30% 45% at 70% 30%, rgba(245, 99, 173, 0.22), transparent 70%);
       filter: blur(30px); }
     .hero { position: relative; width: min(100%, 520px); display: flex; flex-direction: column; align-items: center; text-align: center; }
-    #opener h1 { font-size: clamp(30px, 6vw, 42px); font-weight: 650; letter-spacing: -0.035em; line-height: 1.08; margin: 0 0 12px; }
+    #opener h1 { width: max-content; max-width: calc(100vw - 40px); font-size: clamp(36px, 7vw, 52px); font-weight: 650; letter-spacing: -0.035em; line-height: 1.08; margin: 0 0 12px; }
     #opener p { color: var(--muted); margin: 0 0 20px; }
     /* As much room over the button or the pairing card as there is under
        them, down to the card below: 72px, less the slack under this line's letters. */
@@ -1106,17 +1110,17 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=71": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
-        "/desktop/library.js?v=71": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
-        "/desktop/list-lines.js?v=71": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=71": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
-        "/desktop/qr.js?v=71": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
-        "/desktop/relay.js?v=71": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
-        "/desktop/store.js?v=71": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
-        "/desktop/viewer.js?v=71": "sha384-CY/TCMeHeS84GdXDA+NTdNZadZoq4URHEen2s/h28ecZl0eAASw7awxP5vTeTQFB"
+        "/desktop/library-format.js?v=72": "sha384-V9yzuEuvDiZRFVaJ97Dx/M2li27I3Brzgj/wsm3xJBdrCe4LmYbZ0OU+ln01X2hY",
+        "/desktop/library.js?v=72": "sha384-Qxm9SBDFqlyNxcvsWamjQ+ag6NFR4KnEIECHPABoesZpZaSpKFSflSN5HVryOCTu",
+        "/desktop/list-lines.js?v=72": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/pair.js?v=72": "sha384-Wb7Y41N9s8FcZxGdACC1jhsDwDDRSVrLBo/OrHENh8JrdPJ+h/8Lq4NarKb8HHDh",
+        "/desktop/qr.js?v=72": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
+        "/desktop/relay.js?v=72": "sha384-YzyDFYljDQx3ommGDfjZxLSzDRCSR4dLCAF1Mo5zwV8tcVZHuqkdFflRv+qyxWkN",
+        "/desktop/store.js?v=72": "sha384-GvioXFykoXVsDv9AfiSKufLJSbrSNdRCrmq5gT1js5zTUxGN3I4LH4umf1AsqEZy",
+        "/desktop/viewer.js?v=72": "sha384-p2Z82qfDOAAOS9ePLAyIqPZSZxYK+jHKaRAHF2Eu4HP1+jki6jVjK4Bmyr7zj6pl"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=71" integrity="sha384-CY/TCMeHeS84GdXDA+NTdNZadZoq4URHEen2s/h28ecZl0eAASw7awxP5vTeTQFB"></script>
+  <script type="module" src="./viewer.js?v=72" integrity="sha384-p2Z82qfDOAAOS9ePLAyIqPZSZxYK+jHKaRAHF2Eu4HP1+jki6jVjK4Bmyr7zj6pl"></script>
 </body>
 </html>
