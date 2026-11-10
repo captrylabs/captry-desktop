@@ -66,16 +66,25 @@ const TYPE_LABELS = {
   UNCLASSIFIED: "Unsorted",
 };
 
+/**
+ * [table]'s own entry for [key], or undefined. The keys come from the phone,
+ * so "constructor" or "__proto__" must not find what every object inherits.
+ */
+export function own(table, key) {
+  return typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 export function typeLabel(type) {
   if (!type) return "";
-  return TYPE_LABELS[type] ?? type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, " ");
+  type = String(type);
+  return own(TYPE_LABELS, type) ?? type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, " ");
 }
 
 /** The singular, for a line under a title. "Receipt", not "Receipts". */
 export function typeName(type) {
   if (!type || type === "UNCLASSIFIED") return "";
   const special = { PERSON: "Person", CONFIRMATION: "Order", INSTRUCTIONS: "How-to", RECOMMENDATION: "Pick", TROUBLESHOOTING: "Fix", MODEL_NUMBER: "Model", TEMPORARY_INFO: "Temp info", REFERENCE: "Reference", TRAVEL: "Travel", TRACKING: "Tracking" };
-  if (special[type]) return special[type];
+  if (own(special, type)) return special[type];
   const plural = typeLabel(type);
   return plural.endsWith("s") ? plural.slice(0, -1) : plural;
 }
@@ -115,7 +124,8 @@ const KNOWN_APPS = {
 
 export function sourceLabel(source) {
   if (!source) return "";
-  if (KNOWN_APPS[source]) return KNOWN_APPS[source];
+  source = String(source);
+  if (own(KNOWN_APPS, source)) return KNOWN_APPS[source];
   if (!source.includes(".") || /\.[a-z]{2,}$/.test(source) && !/^(com|org|net|io|app)\./.test(source)) {
     return source; // a host such as example.com
   }
@@ -430,7 +440,7 @@ export function fileNameOf(c, f) {
   const at = c.capturedAt ? new Date(c.capturedAt) : null;
   const pad = (v) => String(v).padStart(2, "0");
   const day = at ? ` ${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}${pad(at.getMinutes())}` : "";
-  const ext = /\.([a-z0-9]{1,5})$/i.exec(f.file ?? "")?.[1] ?? MIME_EXT[f.mimeType] ?? "";
+  const ext = /\.([a-z0-9]{1,5})$/i.exec(f.file ?? "")?.[1] ?? own(MIME_EXT, f.mimeType) ?? "";
   return `${base}${day}${n}${ext ? "." + ext.toLowerCase() : ""}`;
 }
 

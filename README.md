@@ -30,8 +30,10 @@ With Node 18 or later, nothing to install:
 node verify.mjs
 ```
 
-It checks that the source here is the newest release, that the live page is a
-published release, and that every script the page loads matches its pin.
+It checks that the source here is the newest release, that the live page is the
+newest release (or the one before it, for a day after the newest is published),
+that its headers are the ones in `_headers`, and that every script the page
+loads, and its manifest, match their pins.
 
 It also runs by itself: every hour, [a GitHub Actions check](../../actions/workflows/verify.yml)
 does the same from GitHub's machines, and every run is public. If the page stops

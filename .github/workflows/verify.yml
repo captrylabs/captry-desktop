@@ -1,9 +1,11 @@
-# Checks every hour that captry.app/desktop serves exactly a release published
-# here. Every run is public under Actions. When the page fails to match three
-# times in a row it opens an issue, so a mismatch is on the record, not just in
-# an inbox; when the site matches again, that issue is closed. A run that could
-# not look at all (the site down, or refusing GitHub's machines) fails without
-# an issue: that says nothing about the page.
+# Checks every hour that captry.app/desktop serves exactly the newest release
+# published here. Every run is public under Actions. When the page fails to
+# match three times in a row it opens an issue, so a mismatch is on the record,
+# not just in an inbox; when the site matches again, that issue is closed. A run
+# that could not look at all (the site down, or refusing GitHub's machines)
+# fails without an issue, as that says nothing about the page; but six hours of
+# failed runs in a row open one of their own, so no check going on is on the
+# record too.
 
 name: Verify captry.app/desktop
 
@@ -17,6 +19,7 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: read
 
 concurrency:
   group: verify
@@ -67,14 +70,35 @@ jobs:
             gh issue create --title "$title" --body "$body"
           fi
 
-      - name: Close the issue once the site matches again
+      - name: Open an issue when it has not been checked for six hours
+        if: failure() && steps.check.outputs.ok == 'unknown'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          # This run, and the five before it, all failed.
+          failed=$(gh run list --workflow verify.yml --status completed --limit 5 --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length')
+          [ "$failed" = 5 ] || exit 0
+          title="captry.app/desktop could not be checked"
+          body=$(printf 'The hourly check has not passed for six runs in a row.\n\n```\n%s\n```\n\nRun: %s' "$(cat result.txt)" "$RUN")
+          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Close the issues once the site matches again
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: |
-          title="captry.app/desktop does not match a published release"
-          open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
-          if [ -n "$open" ]; then
-            gh issue close "$open" --comment "The site matches a published release again: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          fi
+          for title in "captry.app/desktop does not match a published release" "captry.app/desktop could not be checked"; do
+            open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+            if [ -n "$open" ]; then
+              gh issue close "$open" --comment "The check passes again: $RUN"
+            fi
+          done

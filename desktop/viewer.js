@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=72";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, snapshotPartFits, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=73";
 import {
   FILTERS,
   RANGES,
@@ -28,12 +28,13 @@ import {
   viewTitle,
   describeRule,
   searchWords,
-} from "./library.js?v=72";
-import * as lines from "./list-lines.js?v=72";
-import * as store from "./store.js?v=72";
-import * as relay from "./relay.js?v=72";
-import * as pair from "./pair.js?v=72";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=72";
+  own,
+} from "./library.js?v=73";
+import * as lines from "./list-lines.js?v=73";
+import * as store from "./store.js?v=73";
+import * as relay from "./relay.js?v=73";
+import * as pair from "./pair.js?v=73";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=73";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -407,10 +408,13 @@ async function startPairing() {
     let at = Date.now();
     thumbOnly.clear();
     feedFiles.clear();
+    const parts = {};
     for (let i = 0; i < status.total; i++) {
       if (session.cancelled) return;
       const body = await openFeed(key, await relay.pairSnapshotPart(code, i));
       if (!body) throw new relay.RelayError("Part of your library could not be opened. Pair again.", 0);
+      // A part out of place, missing or from another library: not what the phone sent.
+      if (!snapshotPartFits(body, i, status.total, parts)) throw new relay.RelayError("Part of your library did not arrive. Pair again.", 0);
       for (const change of body.changes) {
         if (change.op === "snapshot") {
           at = change.at ?? at;
@@ -448,7 +452,8 @@ async function startPairing() {
       place,
       ephemeral: session.ephemeral,
     };
-    feed = { seq: 0, since: at, applied: 0, missing: false };
+    // Entries the library already holds are not applied again.
+    feed = { seq: 0, since: at, n: parts.n ?? null, applied: 0, missing: false };
     // Not remembered: nothing about this pairing is written to the browser,
     // so closing the tab is the end of it on this computer.
     if (!session.ephemeral) await store.remember(place, key, relayToken);
@@ -556,7 +561,7 @@ function showOpened(previous) {
   }
   Object.assign(state, { query: "", filter: "ALL", range: "ANY", source: "", selectedId: null });
   el.search.value = "";
-  const fromHash = hashToView(location.hash);
+  const fromHash = viewFromHash(location.hash);
   state.view = fromHash && viewExists(fromHash) ? fromHash : { kind: "captures" };
 
   buildControls();
@@ -565,16 +570,20 @@ function showOpened(previous) {
   el.search.focus();
 }
 
-/** The browser tab says where you are: the capture, then the place. */
-function setTabTitle(c) {
-  if (!opened) {
+/**
+ * The browser tab says where you are. The browser's history keeps every
+ * title, after Unlink too and wherever the browser syncs it, so a title never
+ * names a capture, a collection or a source; not remembered, it says nothing.
+ */
+function setTabTitle() {
+  if (!opened || opened.ephemeral) {
     document.title = "Captry Desktop";
     return;
   }
-  const place = el.viewTitle.textContent || "Captures";
-  if (picked.size > 1) document.title = `${picked.size} selected · ${place} · Captry`;
-  else if (c) document.title = `${titleOf(c)} · ${place} · Captry`;
-  else document.title = `${place} · Captry`;
+  const named = ["collection", "smart", "source"].includes(state.view.kind);
+  const place = named ? "" : `${el.viewTitle.textContent || "Captures"} · `;
+  if (picked.size > 1) document.title = `${picked.size} selected · ${place}Captry`;
+  else document.title = `${place}Captry`;
 }
 
 function closeOpened() {
@@ -592,7 +601,7 @@ function closeOpened() {
   liveConnection?.stop();
   liveConnection = null;
   liveUp = false;
-  feed = { seq: 0, since: 0, applied: 0, missing: false };
+  feed = { seq: 0, since: 0, n: null, applied: 0, missing: false };
   feedFiles.clear();
   for (const url of fileUrls.values()) URL.revokeObjectURL(url);
   fileUrls.clear();
@@ -601,6 +610,7 @@ function closeOpened() {
   playing?.pause();
   playing = null;
   thumbObserver.disconnect();
+  privateViews.length = 0;
   opened = null;
   shown = [];
   byId = new Map();
@@ -696,12 +706,23 @@ async function openCompose({ text = "", file = null } = {}) {
 
 // --- arriving from elsewhere ----------------------------------------------------------------
 //
-// The share menu (the page installed as an app) and the bookmark button both
-// open this page with ?title=&text=&url=. Kept until the library is open, then
-// turned into a New capture and taken out of the address bar.
+// The bookmark button opens this page with #share?title=&text=&url=: after the
+// #, so the words never reach the server. The share menu (the page installed
+// as an app), and bookmark buttons dragged before that, send ?title=&text=&url=
+// instead. Either is taken out of the address bar at once, so it does not sit
+// in the browser's history, and kept until the library is open, then turned
+// into a New capture.
 
 let arrived = (() => {
-  const q = new URLSearchParams(location.search);
+  const fromHash = location.hash.startsWith("#share?");
+  const q = new URLSearchParams(fromHash ? location.hash.slice("#share?".length) : location.search);
+  if (fromHash) {
+    history.replaceState(null, "", location.pathname + location.search);
+  } else if (["title", "text", "url"].some((k) => q.has(k))) {
+    const rest = new URLSearchParams(location.search);
+    for (const k of ["title", "text", "url"]) rest.delete(k);
+    history.replaceState(null, "", location.pathname + (rest.toString() ? "?" + rest : "") + location.hash);
+  }
   const title = q.get("title")?.trim() ?? "";
   const text = q.get("text")?.trim() ?? "";
   let url = q.get("url")?.trim() ?? "";
@@ -716,9 +737,6 @@ function takeArrived() {
   if (!arrived || !opened?.key) return;
   const text = arrived;
   arrived = null;
-  const q = new URLSearchParams(location.search);
-  for (const k of ["title", "text", "url"]) q.delete(k);
-  history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash);
   openCompose({ text });
 }
 
@@ -765,11 +783,12 @@ document.addEventListener("drop", (event) => {
 });
 
 // The bookmark button: a link to drag to the bookmarks bar, not one to click
-// here (this page's own policy would refuse to run it anyway).
+// here (this page's own policy would refuse to run it anyway). What it carries
+// goes after the #, and the page it ran on gets no handle on this tab.
 const bookmarklet = document.getElementById("bookmarklet");
 if (bookmarklet) {
   bookmarklet.href = "javascript:(()=>{const e=encodeURIComponent;window.open('" + location.origin +
-    "/desktop/?title='+e(document.title)+'&url='+e(location.href)+'&text='+e(String(getSelection()).slice(0,4000)),'_blank')})()";
+    "/desktop/#share?title='+e(document.title)+'&url='+e(location.href)+'&text='+e(String(getSelection()).slice(0,4000)),'_blank','noopener')})()";
   bookmarklet.addEventListener("click", (event) => {
     event.preventDefault();
     toast("Drag it to your bookmarks bar, then click it on any page.");
@@ -1231,7 +1250,7 @@ document.addEventListener("visibilitychange", () => {
  * An upsert replaces or adds a capture, with any new pictures; a delete
  * removes one.
  */
-let feed = { seq: 0, since: 0, applied: 0, missing: false };
+let feed = { seq: 0, since: 0, n: null, applied: 0, missing: false };
 const feedFiles = new Map(); // picture name -> Blob, as the phone sent it
 const FEED_MS = 30_000;
 let feedRunning = false;
@@ -1249,6 +1268,7 @@ async function syncFeed() {
   const target = opened;
   try {
     let changed = 0;
+    let counted = false;
     for (;;) {
       const page = await relay.feedSince(target.relayToken, feed.seq);
       if (opened !== target) return;
@@ -1264,6 +1284,13 @@ async function syncFeed() {
         if (entry.createdAt < feed.since - 5 * 60_000) continue;
         const body = await openFeed(target.key, await relay.feedEntry(target.relayToken, entry.seq));
         if (!body || body.at < feed.since) continue;
+        // Served again by the relay, or not numbered as the phone numbers them.
+        const count = feedCounterAfter(body, feed.n);
+        if (!count.apply) continue;
+        if (feed.n !== count.highest) {
+          feed.n = count.highest;
+          counted = true;
+        }
         // The phone reset its key: this computer's copy is no longer kept up
         // to date, and nothing it sends would be read. Forget it here.
         if (body.changes?.some((c) => c.op === "unpaired")) {
@@ -1275,6 +1302,8 @@ async function syncFeed() {
       if (page.entries.length < 500) break;
     }
     updateSync();
+    // The counter is kept with the library even when nothing shown changed.
+    if (counted && !changed) persistLibrary();
     if (changed) {
       persistLibrary();
       feed.applied += changed;
@@ -1598,10 +1627,10 @@ function remindersSection(c) {
     const when = document.createElement("span");
     when.className = "when";
     when.append(reminderWhen(r.at));
-    if (r.repeat && REPEAT_WORDS[r.repeat]) {
+    if (own(REPEAT_WORDS, r.repeat)) {
       const rep = document.createElement("span");
       rep.className = "repeat";
-      rep.textContent = ` · ${REPEAT_WORDS[r.repeat]}`;
+      rep.textContent = ` · ${own(REPEAT_WORDS, r.repeat)}`;
       when.append(rep);
     }
     li.append(icon("bell"), when);
@@ -2462,7 +2491,7 @@ function persistLibrary() {
       name: target.name,
       smartCollections: target.manifest.smartCollections,
       captures,
-      feed: { seq: feed.seq, since: feed.since },
+      feed: { seq: feed.seq, since: feed.since, n: feed.n },
       thumbs: [...thumbOnly],
       paused: !!target.paused,
     };
@@ -2502,7 +2531,8 @@ async function openFromCache(saved) {
     cached: true,
     paused: !!payload.paused,
   };
-  feed = { seq: payload.feed?.seq ?? 0, since: payload.feed?.since ?? 0, applied: 0, missing: false };
+  const n = payload.feed?.n;
+  feed = { seq: payload.feed?.seq ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false };
   sentItems = await loadSent(saved.key);
   await settleSent();
   showOpened(null);
@@ -2744,7 +2774,7 @@ function renderNav() {
       lead.className = "nav-icon";
       if (item.view.kind === "collection") lead.append(collectionDot(item.view.name));
       else if (item.view.kind === "smart") lead.append(icon("sparkle"));
-      else if (item.view.kind === "type") lead.append(icon(TYPE_ICONS[item.view.type] ?? "tag"));
+      else if (item.view.kind === "type") lead.append(icon(own(TYPE_ICONS, item.view.type) ?? "tag"));
       else lead.append(icon(PLACE_ICONS[item.view.kind] ?? "inbox"));
       b.append(lead);
       const name = document.createElement("span");
@@ -2786,8 +2816,26 @@ function viewExists(view) {
 /** Moves to a view, as a new history entry so Back returns. */
 function go(view) {
   if (sameView(view, state.view)) return;
-  history.pushState(null, "", viewToHash(view));
+  history.pushState(null, "", historyHash(view));
   showView(view);
+}
+
+// Not remembered, a collection's or a source's name stays out of the
+// browser's history: the address bar gets a number that only this tab can
+// turn back into the view, so Back still works and the history holds nothing.
+const privateViews = [];
+
+function historyHash(view) {
+  const hash = viewToHash(view);
+  if (!opened?.ephemeral || !["collection", "smart", "source"].includes(view.kind)) return hash;
+  let i = privateViews.findIndex((v) => sameView(v, view));
+  if (i < 0) i = privateViews.push(view) - 1;
+  return `#view/${i}`;
+}
+
+function viewFromHash(hash) {
+  if (!hash.startsWith("#view/")) return hashToView(hash);
+  return privateViews[Number(hash.slice("#view/".length))] ?? null;
 }
 
 function showView(view) {
@@ -2802,7 +2850,7 @@ function showView(view) {
 
 window.addEventListener("hashchange", () => {
   if (!opened) return;
-  const view = hashToView(location.hash);
+  const view = viewFromHash(location.hash);
   if (view && viewExists(view) && !sameView(view, state.view)) showView(view);
 });
 
@@ -3244,10 +3292,12 @@ function focusRow(index) {
 document.addEventListener("keydown", (event) => {
   if (!opened || event.defaultPrevented || event.altKey) return;
   // Anywhere text is being written, including a note box and the New
-  // capture dialog, keys are letters, not shortcuts.
+  // capture dialog, keys are letters, not shortcuts. Nor under Unlink or an
+  // open menu: a key there is meant for what is in front.
   const target = event.target;
   const typing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement || target?.isContentEditable || el.compose.open || el.keys.open || el.lightbox.open;
+    target instanceof HTMLSelectElement || target?.isContentEditable || el.compose.open || el.keys.open || el.lightbox.open ||
+    unlinkDialog.open || !!document.querySelector(".menu:popover-open, .device-menu:popover-open");
   if (event.ctrlKey || event.metaKey) {
     if ((event.key === "a" || event.key === "A") && !typing && shown.length) {
       event.preventDefault();
@@ -3841,7 +3891,7 @@ function kindTile(c) {
   else if (c.sourceUrl && host) tile.textContent = host.charAt(0).toUpperCase();
   else if (c.private) tile.append(icon("lock"));
   else if (c.files.some(isImage)) tile.append(icon("image"));
-  else tile.append(icon(TYPE_ICONS[c.type] ?? "lines"));
+  else tile.append(icon(own(TYPE_ICONS, c.type) ?? "lines"));
   return tile;
 }
 
@@ -4292,7 +4342,7 @@ function renderDetail(c) {
     meta.append(node);
   };
   if (c.type && c.type !== "UNCLASSIFIED" && !c.private && !c.archived && !c.sent) {
-    chip(typeName(c.type), TYPE_ICONS[c.type] ?? "tag", { kind: "type", type: c.type });
+    chip(typeName(c.type), own(TYPE_ICONS, c.type) ?? "tag", { kind: "type", type: c.type });
   }
   const source = c.sourceApp || c.sourceHost;
   if (source && !c.private && !c.sent) chip(sourceLabel(source), c.sourceUrl ? "link" : "inbox", { kind: "source", source });
@@ -4657,7 +4707,7 @@ const ENTITY_LABELS = {
 };
 
 function entityLabel(type) {
-  return ENTITY_LABELS[type] ?? type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, " ");
+  return own(ENTITY_LABELS, type) ?? type.charAt(0) + type.slice(1).toLowerCase().replace(/_/g, " ");
 }
 
 function when(ms) {

@@ -196,6 +196,50 @@ export async function openFeed(key, bytes) {
   }
 }
 
+// The relay can keep a sealed entry and serve it again, or serve fewer parts
+// of a library than the phone sent. It cannot change what is inside one, so
+// the phone numbers them there: every entry carries `n`, a counter that only
+// goes up, and every part of the library sent at pairing carries `part`,
+// `parts` and the `n` it was made at. A phone from before this sends none of
+// them, and its entries and parts are taken as they always were.
+
+const counter = (v) => Number.isSafeInteger(v) && v >= 0;
+
+/**
+ * Whether to apply [body], and the highest `n` once it is. An entry at or
+ * below [highest] was applied already, and one whose `n` is not a counter is
+ * not the phone's. [highest] is null until a numbered entry or library arrives.
+ */
+export function feedCounterAfter(body, highest) {
+  if (body.n === undefined || body.n === null) return { apply: true, highest };
+  if (!counter(body.n) || (highest !== null && body.n <= highest)) return { apply: false, highest };
+  return { apply: true, highest: body.n };
+}
+
+/**
+ * Whether part [index] of a library, out of the [total] the relay says there
+ * are, is where the phone put it. [seen] starts as {} and is passed from
+ * part to part; once every part has fitted, seen.n is the counter the library
+ * was made at, or null. Numbered parts are taken only all of them, each once,
+ * in its place, from the same library.
+ */
+export function snapshotPartFits(body, index, total, seen) {
+  const numbered = body.parts !== undefined && body.parts !== null;
+  if (index === 0) {
+    seen.numbered = numbered;
+    seen.n = null;
+  } else if (numbered !== seen.numbered) {
+    return false;
+  }
+  if (!numbered) return true;
+  if (!counter(body.parts) || body.parts !== total || body.part !== index) return false;
+  const n = body.n ?? null;
+  if (n !== null && !counter(n)) return false;
+  if (index === 0) seen.n = n;
+  else if (n !== seen.n) return false;
+  return true;
+}
+
 // --- edits for the phone ------------------------------------------------------------
 //
 //   "CPTRYCH" 0x01 | 12-byte nonce | AES-GCM(content key, nonce, json, aad = the first 8 bytes)
