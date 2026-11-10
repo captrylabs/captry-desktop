@@ -201,17 +201,20 @@ export async function openFeed(key, bytes) {
 // the phone numbers them there: every entry carries `n`, a counter that only
 // goes up, and every part of the library sent at pairing carries `part`,
 // `parts` and the `n` it was made at. A phone from before this sends none of
-// them, and its entries and parts are taken as they always were.
+// them, and its entries and parts are taken as they always were, until the
+// first numbered one: after that, an entry with no `n` can only be an old one
+// served again, so it is refused.
 
 const counter = (v) => Number.isSafeInteger(v) && v >= 0;
 
 /**
  * Whether to apply [body], and the highest `n` once it is. An entry at or
  * below [highest] was applied already, and one whose `n` is not a counter is
- * not the phone's. [highest] is null until a numbered entry or library arrives.
+ * not the phone's. [highest] is null until a numbered entry or library
+ * arrives; once it is not, an entry with no `n` is from before and is refused.
  */
 export function feedCounterAfter(body, highest) {
-  if (body.n === undefined || body.n === null) return { apply: true, highest };
+  if (body.n === undefined || body.n === null) return { apply: highest === null, highest };
   if (!counter(body.n) || (highest !== null && body.n <= highest)) return { apply: false, highest };
   return { apply: true, highest: body.n };
 }

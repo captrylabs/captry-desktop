@@ -31,9 +31,13 @@ node verify.mjs
 ```
 
 It checks that the source here is the newest release, that the live page is the
-newest release (or the one before it, for a day after the newest is published),
-that its headers are the ones in `_headers`, and that every script the page
-loads, and its manifest, match their pins.
+newest release (or the one before it, until the end of the day after the newest
+is dated), that its headers are the ones its release records from `_headers`,
+with nothing added that could send the page or its reports elsewhere, and that
+every script the page loads, and its manifest, match their pins. One addition
+is let through: the `NEL` and `Report-To` headers Cloudflare puts on what it
+serves, so a browser that fails to reach the site can tell Cloudflare, and only
+when they report to Cloudflare's own address.
 
 It also runs by itself: every hour, [a GitHub Actions check](../../actions/workflows/verify.yml)
 does the same from GitHub's machines, and every run is public. If the page stops

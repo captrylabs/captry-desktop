@@ -31,6 +31,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The check only reads: the token is not left behind in .git.
+          persist-credentials: false
 
       - name: Check the live page against releases.json
         id: check
@@ -62,7 +65,9 @@ jobs:
         shell: bash
         run: |
           title="captry.app/desktop does not match a published release"
-          body=$(printf 'The hourly check failed three times in a row.\n\n```\n%s\n```\n\nRun: %s' "$(cat result.txt)" "$RUN")
+          # result.txt quotes what the live site sent. With its backticks
+          # swapped out it cannot close the code block and be read as the issue's own text.
+          body=$(printf 'The hourly check failed three times in a row.\n\n```\n%s\n```\n\nRun: %s' "$(tr '`' "'" < result.txt)" "$RUN")
           open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
           if [ -n "$open" ]; then
             gh issue comment "$open" --body "$body"
@@ -81,7 +86,7 @@ jobs:
           failed=$(gh run list --workflow verify.yml --status completed --limit 5 --json conclusion --jq '[.[] | select(.conclusion == "failure")] | length')
           [ "$failed" = 5 ] || exit 0
           title="captry.app/desktop could not be checked"
-          body=$(printf 'The hourly check has not passed for six runs in a row.\n\n```\n%s\n```\n\nRun: %s' "$(cat result.txt)" "$RUN")
+          body=$(printf 'The hourly check has not passed for six runs in a row.\n\n```\n%s\n```\n\nRun: %s' "$(tr '`' "'" < result.txt)" "$RUN")
           open=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
           if [ -n "$open" ]; then
             gh issue comment "$open" --body "$body"

@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, snapshotPartFits, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=73";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, snapshotPartFits, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=74";
 import {
   FILTERS,
   RANGES,
@@ -29,12 +29,12 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=73";
-import * as lines from "./list-lines.js?v=73";
-import * as store from "./store.js?v=73";
-import * as relay from "./relay.js?v=73";
-import * as pair from "./pair.js?v=73";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=73";
+} from "./library.js?v=74";
+import * as lines from "./list-lines.js?v=74";
+import * as store from "./store.js?v=74";
+import * as relay from "./relay.js?v=74";
+import * as pair from "./pair.js?v=74";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=74";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -344,12 +344,14 @@ async function startPairing() {
   // Remembered or not is decided now, before any picture is cached.
   const session = { cancelled: false, pageToken: relay.newPairToken(), ephemeral: !rememberBox.checked };
   pairing = session;
+  // A busy relay is waited out, but not once Cancel is pressed.
+  const stopped = () => session.cancelled;
   try {
     const keys = await pair.pairKeys();
     let code;
     for (let i = 0; i < 5; i++) {
       code = pair.newPairCode();
-      if (await relay.pairOffer(code, keys.publicKey, pair.browserLabel(), session.pageToken)) break;
+      if (await relay.pairOffer(code, keys.publicKey, pair.browserLabel(), session.pageToken, stopped)) break;
       code = null;
     }
     if (!code) throw new Error("no code");
@@ -367,8 +369,9 @@ async function startPairing() {
     while (!raw) {
       if (session.cancelled) return;
       if (Date.now() - started > PAIR_CODE_MS && !secret) throw new relay.RelayError("The code expired. Start again.", 410);
-      await sleep(1500);
-      const answer = await relay.pairAnswer(code);
+      // Every 3 seconds: the relay counts these, with the phone's, per network.
+      await sleep(3000);
+      const answer = await relay.pairAnswer(code, stopped);
       if (answer.phoneKey && !secret) {
         const { phoneKey, proof } = pair.splitAnswer(answer.phoneKey);
         stopPairCountdown();
@@ -398,8 +401,8 @@ async function startPairing() {
     while (!status.total || status.have.length < status.total) {
       if (session.cancelled) return;
       if (Date.now() - waitedFrom > 15 * 60_000) throw new relay.RelayError("Your library did not finish arriving. Pair again.", 0);
-      await sleep(1200);
-      status = await relay.pairSnapshot(code);
+      await sleep(3000);
+      status = await relay.pairSnapshot(code, stopped);
       if (status.total) pairEl.progress.firstElementChild.style.width = `${Math.round((status.have.length / status.total) * 50)}%`;
     }
 
@@ -411,7 +414,7 @@ async function startPairing() {
     const parts = {};
     for (let i = 0; i < status.total; i++) {
       if (session.cancelled) return;
-      const body = await openFeed(key, await relay.pairSnapshotPart(code, i));
+      const body = await openFeed(key, await relay.pairSnapshotPart(code, i, stopped));
       if (!body) throw new relay.RelayError("Part of your library could not be opened. Pair again.", 0);
       // A part out of place, missing or from another library: not what the phone sent.
       if (!snapshotPartFits(body, i, status.total, parts)) throw new relay.RelayError("Part of your library did not arrive. Pair again.", 0);
@@ -527,6 +530,7 @@ el.againForget.addEventListener("click", async () => {
   await store.forget();
   sentItems = [];
   el.again.hidden = true;
+  tellOtherTabs(null);
   say("Forgotten on this computer.");
 });
 
@@ -591,8 +595,20 @@ function closeOpened() {
   // A draft belongs to this pairing: nothing typed for one phone waits for another.
   if (el.compose.open) el.compose.close();
   resetCompose();
-  flushToast();
+  // A Trash still in its Undo time, and edits not yet answered, belong to
+  // the library being closed: dropped with it, not sent on its way out.
+  toastExpire = null;
+  clearTimeout(toastTimer);
+  el.toast.hidden = true;
+  trashPending.clear();
+  pendingEdits.clear();
   if (el.lightbox.open) el.lightbox.close();
+  lb.items = [];
+  el.lbCaption.textContent = "";
+  el.lbCount.textContent = "";
+  el.lbNote.textContent = "";
+  el.lbStage.replaceChildren();
+  el.lbDownload.removeAttribute("href");
   picked.clear();
   lastPhoneAt = 0;
   el.sync.hidden = true;
@@ -617,6 +633,17 @@ function closeOpened() {
   el.list.replaceChildren();
   el.detail.replaceChildren();
   el.nav.replaceChildren();
+  // Nothing of the library's names or words is left in the page: the
+  // pickers, New capture's suggestions (refilled above while it was still
+  // open), the search box and the heading.
+  el.viewSelect.replaceChildren();
+  el.source.replaceChildren();
+  el.composeCollectionNames.replaceChildren();
+  el.search.value = "";
+  el.viewTitle.textContent = "";
+  el.viewDetail.textContent = "";
+  el.viewDetail.hidden = true;
+  Object.assign(state, { view: { kind: "captures" }, query: "", source: "", selectedId: null });
 }
 
 /** The phone reset its key: forget this computer's copy and offer pairing. */
@@ -643,7 +670,7 @@ const unlinkDialog = document.getElementById("unlink");
 el.close.addEventListener("click", () => {
   el.deviceMenu.hidePopover();
   document.getElementById("unlink-name").textContent = opened?.place?.name ?? "your phone";
-  const waiting = pendingEdits.size + sentItems.filter((i) => i.relayId && !i.delivered).length;
+  const waiting = pendingEdits.size + trashPending.size + sentItems.filter((i) => i.relayId && !i.delivered).length;
   const queued = document.getElementById("unlink-queued");
   queued.hidden = waiting === 0;
   queued.textContent = waiting === 1
@@ -655,6 +682,7 @@ el.close.addEventListener("click", () => {
 
 unlinkDialog.addEventListener("close", async () => {
   if (unlinkDialog.returnValue !== "unlink") return;
+  const token = opened?.relayToken ? await sha256Hex(new TextEncoder().encode(opened.relayToken)) : null;
   closeOpened();
   el.app.hidden = true;
   el.opener.hidden = false;
@@ -665,7 +693,52 @@ unlinkDialog.addEventListener("close", async () => {
   await store.forget();
   sentItems = [];
   el.again.hidden = true;
+  tellOtherTabs(token);
   say("Unlinked. Pair again to use Captry here.", "warn");
+});
+
+// Other tabs of this page hear of an Unlink or a Forget here and close the
+// library too, so none of them keeps showing it, or writes it back to the
+// storage just cleared. Only a hash of the relay token goes between them.
+const tabs = (() => {
+  try {
+    return new BroadcastChannel("captry-desktop");
+  } catch (e) {
+    return null;
+  }
+})();
+
+function tellOtherTabs(token) {
+  try {
+    tabs?.postMessage({ type: "unlinked", token });
+  } catch (e) {}
+}
+
+tabs?.addEventListener("message", async (event) => {
+  if (event.data?.type !== "unlinked") return;
+  // A library that is not remembered was not in the storage just cleared:
+  // closed only when it is the same pairing.
+  const mine = opened?.relayToken ? await sha256Hex(new TextEncoder().encode(opened.relayToken)) : null;
+  const closing = opened && (!opened.ephemeral || (event.data.token && event.data.token === mine));
+  if (closing) {
+    if (unlinkDialog.open) unlinkDialog.close();
+    closeOpened();
+    el.app.hidden = true;
+    el.opener.hidden = false;
+    el.close.hidden = true;
+    el.newCapture.hidden = true;
+    history.replaceState(null, "", location.pathname);
+    clearTimeout(persistTimer);
+    // What this tab was still writing may have landed after the other tab
+    // cleared; cleared again, unless a new pairing is already kept.
+    store.dropWrites();
+    if (!(await store.recall())) await store.forget();
+  }
+  if (closing || !opened) {
+    sentItems = [];
+    el.again.hidden = true;
+    if (closing) say("Unlinked in another tab. Pair again to use Captry here.", "warn");
+  }
 });
 
 async function sha256Hex(bytes) {
@@ -709,9 +782,11 @@ async function openCompose({ text = "", file = null } = {}) {
 // The bookmark button opens this page with #share?title=&text=&url=: after the
 // #, so the words never reach the server. The share menu (the page installed
 // as an app), and bookmark buttons dragged before that, send ?title=&text=&url=
-// instead. Either is taken out of the address bar at once, so it does not sit
-// in the browser's history, and kept until the library is open, then turned
-// into a New capture.
+// instead. Either is taken out of the address bar at once, so it is not left
+// there to be bookmarked or copied, and kept until the library is open, then
+// turned into a New capture. The browser has already loaded the address with
+// the words in it, though, and may keep that in its own history; nothing
+// here can take it out.
 
 let arrived = (() => {
   const fromHash = location.hash.startsWith("#share?");
@@ -1016,7 +1091,10 @@ async function saveDraft() {
     title: el.composeTitleInput.value,
     note: el.composeNoteInput.value,
   };
-  await store.saveDraft(await sealCache(key, new TextEncoder().encode(JSON.stringify(draft))));
+  const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(draft)));
+  // Unlinked meanwhile: nothing goes back into the storage just cleared.
+  if (opened?.key !== key) return;
+  await store.saveDraft(sealed);
 }
 
 /** Puts a kept draft back into New capture, without opening it. */
@@ -1377,7 +1455,8 @@ function applyChanges(changes) {
         const old = fileUrls.get(f.file);
         if (old) URL.revokeObjectURL(old);
         fileUrls.delete(f.file);
-        if (!opened.ephemeral) sealCache(opened.key, bytes).then((sealed) => store.saveImage(f.file, sealed));
+        const target = opened;
+        if (!target.ephemeral) sealCache(target.key, bytes).then((sealed) => opened === target && store.saveImage(f.file, sealed));
         lightboxArrived(f.file);
         n++;
       }
@@ -1401,14 +1480,15 @@ function applyChanges(changes) {
           feedFiles.set(f.file, mine);
           thumbOnly.delete(f.file);
           const target = opened;
-          if (!target.ephemeral) mine.arrayBuffer().then((b) => sealCache(target.key, new Uint8Array(b))).then((sealed) => store.saveImage(f.file, sealed));
+          if (!target.ephemeral) mine.arrayBuffer().then((b) => sealCache(target.key, new Uint8Array(b))).then((sealed) => opened === target && store.saveImage(f.file, sealed));
           continue;
         }
         const bytes = fromBase64(f.data);
         feedFiles.set(f.file, new Blob([bytes], { type: safeMime(mime) }));
         if (f.thumb) thumbOnly.add(f.file);
         else thumbOnly.delete(f.file);
-        if (!opened.ephemeral) sealCache(opened.key, bytes).then((sealed) => store.saveImage(f.file, sealed));
+        const target = opened;
+        if (!target.ephemeral) sealCache(target.key, bytes).then((sealed) => opened === target && store.saveImage(f.file, sealed));
       }
       // Waiting out its Undo in Trash: stays out of sight until that is settled.
       if (trashPending.has(capture.id)) continue;
@@ -1441,6 +1521,7 @@ async function saveSent(item) {
   const image = item.image ? new Uint8Array(await item.image.arrayBuffer()) : null;
   const plain = { ...item, image: image ? toBase64(image) : null };
   const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(plain)));
+  if (opened?.key !== key) return;
   await store.addSent({ id: item.id, sealed, savedAt: item.createdAt ?? Date.now() });
 }
 
@@ -2216,11 +2297,14 @@ function openEditor(c, field) {
   input.focus();
 }
 
+/** True once the relay has taken the change. */
 async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = false } = {}) {
+  if (!opened) return false;
   if (opened.paused) {
     toast(PAUSED);
-    return;
+    return false;
   }
+  const target = opened;
   const change = { format: 1, id: crypto.randomUUID(), at: Date.now(), capture: c.id, ops };
   const before = snapshotCapture(c);
   const trashing = ops.some((o) => o.op === "trash");
@@ -2238,20 +2322,24 @@ async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = fal
   try {
     relayId = await relay.send(opened.relayToken, await sealChange(opened.key, change));
   } catch (e) {
+    // The library was closed meanwhile: nothing of it to put back or say.
+    if (opened !== target) return false;
     Object.assign(c, before);
     delete c.pendingEdit;
     c._hay = undefined;
     if (trashing && !opened.manifest.captures.includes(c)) opened.manifest.captures.push(c);
     redraw();
     toast(e.message ?? "That change could not be sent.");
-    return;
+    return false;
   }
+  if (opened !== target) return false;
   pendingEdits.set(change.id, { relayId, captureId: c.id, before, ops, at: change.at, collected: false });
   watchDelivery();
   updateSync();
-  if (quiet) return;
+  if (quiet) return true;
   const back = undo ? null : inverseOps(ops, before);
   toast(undo ? "Undone" : "Queued for your phone", back ? { label: "Undo", run: () => sendChange(c, back, { undo: true }) } : null);
+  return true;
 }
 
 /** Shows [ops] on this page's copy of [c], as the phone will apply them. */
@@ -2378,10 +2466,13 @@ function trashWithUndo(list) {
       if (settled) return;
       settled = true;
       for (const id of ids) trashPending.delete(id);
+      const target = opened;
       for (const c of list) {
+        if (opened !== target) return;
         await sendChange(c, [{ op: "trash" }], { quiet: true });
         if (list.length > 1) await new Promise((r) => setTimeout(r, 250));
       }
+      if (opened !== target) return;
       redraw();
     },
   });
@@ -2809,7 +2900,9 @@ function markNav() {
 
 function viewExists(view) {
   const cat = catalog(opened.manifest, Date.now());
-  if (view.kind === "source") return true;
+  // A source is not in the sidebar, so it is looked for among the library's
+  // own; any other name, from a link, would only title an empty view.
+  if (view.kind === "source") return sources(opened.manifest.captures).some((s) => s.id === view.source);
   return [...cat.places, ...cat.collections, ...cat.smart, ...cat.types].some((i) => sameView(i.view, view));
 }
 
@@ -3235,19 +3328,28 @@ async function bulkSend(list, opsFor, message, { undo = false } = {}) {
     toast("Nothing to change.");
     return;
   }
+  // Only what the relay took is counted, and only that is undone. The first
+  // refusal stops the rest, as the next would most likely be refused too;
+  // when nothing went, the refusal's own message is the one left showing.
+  const target = opened;
+  const sent = [];
   for (const [c, ops] of work) {
-    await sendChange(c, ops, { quiet: true });
+    if (!(await sendChange(c, ops, { quiet: true }))) break;
+    sent.push([c, ops]);
     // The relay takes a limited number of requests a minute per pairing.
     if (work.length > 1) await new Promise((r) => setTimeout(r, 250));
   }
+  if (opened !== target || !sent.length) return;
   redraw();
   updateSync();
+  const left = work.length - sent.length;
+  const said = message(sent.length) + (left ? `. ${left} not sent.` : "");
   if (undo) {
-    toast(message(work.length));
+    toast(said);
     return;
   }
-  const backs = new Map(work.map(([c, ops]) => [c, inverseOps(ops)]));
-  toast(message(work.length), {
+  const backs = new Map(sent.map(([c, ops]) => [c, inverseOps(ops)]));
+  toast(said, {
     label: "Undo",
     run: () => bulkSend([...backs.keys()], (c) => backs.get(c), (n) => (n === 1 ? "Undone" : `Undid ${n}`), { undo: true }),
   });
@@ -4785,7 +4887,9 @@ function option(value, label) {
 
 function viewLink(label, view) {
   const a = document.createElement("a");
-  a.href = viewToHash(view);
+  // The same address go() gives it, so a link opened in a new tab or copied
+  // carries no name when the computer is not remembered.
+  a.href = historyHash(view);
   a.textContent = label;
   a.addEventListener("click", (event) => {
     event.preventDefault();

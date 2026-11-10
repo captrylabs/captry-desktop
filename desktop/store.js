@@ -34,9 +34,15 @@ function open() {
   });
 }
 
-async function run(store, mode, work) {
+// Counts forget()s. A write asked for before one does not land after it: it
+// is dropped if forget() came while the database was opening, and is ordered
+// before the clearing if it was already under way.
+let generation = 0;
+
+async function run(store, mode, work, asked = generation) {
   const db = await open();
   try {
+    if (mode === "readwrite" && asked !== generation) return undefined;
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(store, mode);
       const result = work(tx.objectStore(store));
@@ -67,8 +73,14 @@ export function recall() {
   return safely(() => run(PLACE, "readonly", (s) => s.get("current")), null);
 }
 
+/** Drops every write asked for so far that has not started. */
+export function dropWrites() {
+  generation++;
+}
+
 /** Forgets everything: the place, the key, the cache, and anything waiting. */
 export async function forget() {
+  dropWrites();
   for (const store of [PLACE, SENT, LIBRARY, IMAGES]) {
     await safely(() => run(store, "readwrite", (s) => s.clear()), null);
   }
