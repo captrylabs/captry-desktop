@@ -220,17 +220,48 @@ export function feedCounterAfter(body, highest) {
 }
 
 /**
+ * [seq] as the page's next place in the feed, or null when it is not one: a
+ * whole number above [last]. The relay hands out the numbers, so one that is
+ * not would set the place anywhere, and it is kept. A mailbox emptied and
+ * written again starts from the clock, far above any count, which passes.
+ */
+export function feedSeqAfter(seq, last) {
+  return Number.isSafeInteger(seq) && seq > last ? seq : null;
+}
+
+/** The most parts a library comes in (MAX_PARTS in worker/feedback/src/pairing.js and DesktopPairing.kt). */
+export const SNAPSHOT_MAX_PARTS = 40;
+
+/**
+ * The relay's word on the library being sent at pairing, as { total, have,
+ * done }, or null when it is not one the phone could have caused: `total`
+ * from 1 to SNAPSHOT_MAX_PARTS and `have` the part numbers stored. Null is
+ * also the answer before the first part is in (`total` 0), so the page waits
+ * on either, within its time limit; `done` once every part is there.
+ */
+export function snapshotStatus(raw) {
+  const total = raw?.total;
+  const have = raw?.have;
+  if (!Number.isInteger(total) || total < 1 || total > SNAPSHOT_MAX_PARTS) return null;
+  if (!Array.isArray(have) || have.length > SNAPSHOT_MAX_PARTS || !have.every((i) => Number.isInteger(i))) return null;
+  const got = new Set(have.filter((i) => i >= 0 && i < total)).size;
+  return { total, have: got, done: got === total };
+}
+
+/**
  * Whether part [index] of a library, out of the [total] the relay says there
  * are, is where the phone put it. [seen] starts as {} and is passed from
  * part to part; once every part has fitted, seen.n is the counter the library
  * was made at, or null. Numbered parts are taken only all of them, each once,
- * in its place, from the same library.
+ * in its place, from the same library. seen.snapshot says whether the first
+ * part opened with the library's `snapshot` change, as every phone's does.
  */
 export function snapshotPartFits(body, index, total, seen) {
   const numbered = body.parts !== undefined && body.parts !== null;
   if (index === 0) {
     seen.numbered = numbered;
     seen.n = null;
+    seen.snapshot = body.changes.some((c) => c?.op === "snapshot");
   } else if (numbered !== seen.numbered) {
     return false;
   }
@@ -241,6 +272,17 @@ export function snapshotPartFits(body, index, total, seen) {
   if (index === 0) seen.n = n;
   else if (n !== seen.n) return false;
   return true;
+}
+
+/**
+ * Whether the parts that fitted ([seen], from snapshotPartFits) are a library
+ * the phone sent: a first part was there and it held the `snapshot` change.
+ * Phones since 10 November number their parts; one from before numbers none,
+ * and its parts are still taken, but never without that change, so neither
+ * kind opens as an empty library on the relay's word alone.
+ */
+export function snapshotArrived(seen) {
+  return seen.snapshot === true && typeof seen.numbered === "boolean";
 }
 
 // --- edits for the phone ------------------------------------------------------------

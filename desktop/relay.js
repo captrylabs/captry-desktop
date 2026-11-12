@@ -84,6 +84,25 @@ export async function send(token, sealed) {
   return (await response.json()).id;
 }
 
+/** How many entries the relay puts in one page of the feed (FEED_PAGE in worker/feedback/src/relay.js). */
+export const FEED_PAGE = 500;
+
+/**
+ * Pages read in one look at the feed. The relay keeps at most 2,000 entries,
+ * four pages, so twice that never stops a real catch-up; past it, the next
+ * look carries on.
+ */
+export const FEED_PAGES_PER_LOOK = 8;
+
+/**
+ * Whether to ask for another page after the [pages]th of this look: only a
+ * full page that moved the place on, [before] to [after], and not past the
+ * cap. A relay that keeps serving full pages of nothing new is not followed.
+ */
+export function moreFeedPages(entries, before, after, pages) {
+  return entries >= FEED_PAGE && after > before && pages < FEED_PAGES_PER_LOOK;
+}
+
 /** Feed entries after `after`: { entries: [{seq, createdAt, size}], latest, trimmedThrough }. */
 export async function feedSince(token, after) {
   const response = await call(token, `/feed?after=${after}`);
@@ -96,6 +115,32 @@ export async function feedEntry(token, seq) {
 }
 
 /**
+ * What a look does when one entry could not be fetched, given the relay's
+ * [status] (0 or none when it was not reached, or the body broke off):
+ * "skip" one the relay no longer has (404, trimmed or expired: asking again
+ * cannot bring it back), else "stop" with the place unmoved, so the next look
+ * asks for it again. A 429 is the mailbox's reads for the day, a 5xx a relay
+ * having trouble; neither may cost a change for good.
+ */
+export function afterFeedEntryFailed(status) {
+  return status === 404 ? "skip" : "stop";
+}
+
+/**
+ * How long a live connection has to stay open before the wait to reconnect
+ * starts again from a second: half a minute, longer than any normal
+ * handshake and well under the 45 s between pings, so a relay that accepts
+ * and drops at once is retried ever more slowly, up to a minute apart.
+ */
+export const LIVE_STEADY_MS = 30_000;
+const LIVE_FIRST_MS = 1000;
+
+/** The wait before reconnecting, given the current one and how long the socket was open (0 if it never opened). */
+export function liveDelayAfter(delay, openFor) {
+  return openFor >= LIVE_STEADY_MS ? LIVE_FIRST_MS : delay;
+}
+
+/**
  * A live connection: the relay says "feed" or "items" the moment something
  * changes, and the page then asks over the ordinary routes. The token goes as
  * a WebSocket subprotocol, never in the URL. Reconnects on its own, more and
@@ -104,7 +149,8 @@ export async function feedEntry(token, seq) {
 export function live(token, onMessage, onState = () => {}) {
   let socket = null;
   let stopped = false;
-  let delay = 1000;
+  let delay = LIVE_FIRST_MS;
+  let openedAt = 0;
   let ping = 0;
   let retry = 0;
   const connect = () => {
@@ -116,7 +162,8 @@ export function live(token, onMessage, onState = () => {}) {
       return;
     }
     socket.addEventListener("open", () => {
-      delay = 1000;
+      // The wait is not reset here but on closing, once the socket has stayed up.
+      openedAt = Date.now();
       onState(true);
       // Keeps the connection from being dropped as idle; answered by the
       // relay without waking anything up.
@@ -130,6 +177,8 @@ export function live(token, onMessage, onState = () => {}) {
     });
     socket.addEventListener("close", () => {
       clearInterval(ping);
+      delay = liveDelayAfter(delay, openedAt ? Date.now() - openedAt : 0);
+      openedAt = 0;
       onState(false);
       schedule();
     });
@@ -213,14 +262,20 @@ export async function pairAnswer(code, stopped = never) {
   return r.json();
 }
 
+// A part read as often as the relay allows, or dropped once every part went
+// out, is 410: no wait brings it back, only pairing again.
+const PART_GONE = "Part of your library did not arrive. Pair again.";
+
 export async function pairSnapshot(code, stopped = never) {
   const r = await pairCall(code, "/snapshot", {}, stopped);
+  if (r.status === 410) throw new RelayError(PART_GONE, 410);
   if (!r.ok) throw new RelayError("Pairing stopped.", r.status);
   return r.json();
 }
 
 export async function pairSnapshotPart(code, n, stopped = never) {
   const r = await pairCall(code, `/snapshot/${n}`, {}, stopped);
+  if (r.status === 410) throw new RelayError(PART_GONE, 410);
   if (!r.ok) throw new RelayError("Part of your library did not arrive.", r.status);
   return new Uint8Array(await r.arrayBuffer());
 }

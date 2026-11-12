@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, snapshotPartFits, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=74";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=75";
 import {
   FILTERS,
   RANGES,
@@ -29,12 +29,12 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=74";
-import * as lines from "./list-lines.js?v=74";
-import * as store from "./store.js?v=74";
-import * as relay from "./relay.js?v=74";
-import * as pair from "./pair.js?v=74";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=74";
+} from "./library.js?v=75";
+import * as lines from "./list-lines.js?v=75";
+import * as store from "./store.js?v=75";
+import * as relay from "./relay.js?v=75";
+import * as pair from "./pair.js?v=75";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=75";
 
 const PAGE = 150;
 let lastShownId = null;
@@ -277,8 +277,7 @@ const pairEl = {
 $("pair-label").textContent = pair.browserLabel();
 let pairing = null; // { code, cancelled }
 
-/** How long the relay keeps a code open for a phone to answer. */
-const PAIR_CODE_MS = 10 * 60_000;
+const PAIR_CODE_MS = pair.PAIR_CODE_MS;
 let pairCountdown = 0;
 
 /** The code to scan; an empty square while there is none. */
@@ -364,11 +363,14 @@ async function startPairing() {
     const started = Date.now();
     startPairCountdown(started);
     let secret = null;
+    let answeredAt = null;
     let phoneLabel = "your phone";
     let raw = null;
     while (!raw) {
       if (session.cancelled) return;
-      if (Date.now() - started > PAIR_CODE_MS && !secret) throw new relay.RelayError("The code expired. Start again.", 410);
+      const over = pair.pairWaitOver(Date.now(), started, answeredAt);
+      if (over === "code") throw new relay.RelayError("The code expired. Start again.", 410);
+      if (over === "key") throw new relay.RelayError("Pairing did not complete. Start again.", 0);
       // Every 3 seconds: the relay counts these, with the phone's, per network.
       await sleep(3000);
       const answer = await relay.pairAnswer(code, stopped);
@@ -379,6 +381,7 @@ async function startPairing() {
         // answer without the right one came from somewhere else.
         secret = await pair.pairScanSecret(keys.privateKey, phoneKey, code, scanSecret, keys.publicKey, phoneKey);
         if (secret.proof !== proof) throw new relay.RelayError("Pairing did not work. Start again.", 0);
+        answeredAt = Date.now();
         pairEl.panel.dataset.stage = "scanned";
         pairEl.title.textContent = "Scanned";
         pairEl.status.textContent = "Tap Pair on your phone to finish.";
@@ -396,14 +399,16 @@ async function startPairing() {
     pairEl.panel.dataset.stage = "receive";
     pairEl.progress.hidden = false;
     pairEl.status.textContent = "Receiving your library…";
-    let status = { total: 0, have: [] };
+    // Only a status the phone could have caused is taken; anything else is
+    // waited past, like the empty one before its first part.
+    let status = null;
     const waitedFrom = Date.now();
-    while (!status.total || status.have.length < status.total) {
+    while (!status?.done) {
       if (session.cancelled) return;
       if (Date.now() - waitedFrom > 15 * 60_000) throw new relay.RelayError("Your library did not finish arriving. Pair again.", 0);
       await sleep(3000);
-      status = await relay.pairSnapshot(code, stopped);
-      if (status.total) pairEl.progress.firstElementChild.style.width = `${Math.round((status.have.length / status.total) * 50)}%`;
+      status = snapshotStatus(await relay.pairSnapshot(code, stopped));
+      if (status) pairEl.progress.firstElementChild.style.width = `${Math.round((status.have / status.total) * 50)}%`;
     }
 
     const captures = [];
@@ -437,6 +442,8 @@ async function startPairing() {
       }
       pairEl.progress.firstElementChild.style.width = `${50 + Math.round(((i + 1) / status.total) * 50)}%`;
     }
+    // Never "Paired" on a library the phone did not send.
+    if (!snapshotArrived(parts)) throw new relay.RelayError("Part of your library did not arrive. Pair again.", 0);
     await relay.pairDone(code, session.pageToken);
     captures.sort((a, b) => (b.capturedAt ?? 0) - (a.capturedAt ?? 0));
 
@@ -527,10 +534,12 @@ async function openRemembered(saved) {
 }
 
 el.againForget.addEventListener("click", async () => {
+  // Tabs showing the pairing kept here close with it; others stay as they are.
+  const token = await tokenHash((await store.recall())?.relayToken);
   await store.forget();
   sentItems = [];
   el.again.hidden = true;
-  tellOtherTabs(null);
+  tellOtherTabs(token);
   say("Forgotten on this computer.");
 });
 
@@ -682,7 +691,8 @@ el.close.addEventListener("click", () => {
 
 unlinkDialog.addEventListener("close", async () => {
   if (unlinkDialog.returnValue !== "unlink") return;
-  const token = opened?.relayToken ? await sha256Hex(new TextEncoder().encode(opened.relayToken)) : null;
+  const relayToken = opened?.relayToken ?? null;
+  const token = await tokenHash(relayToken);
   closeOpened();
   el.app.hidden = true;
   el.opener.hidden = false;
@@ -690,16 +700,26 @@ unlinkDialog.addEventListener("close", async () => {
   el.newCapture.hidden = true;
   history.replaceState(null, "", location.pathname);
   clearTimeout(persistTimer);
-  await store.forget();
-  sentItems = [];
-  el.again.hidden = true;
+  // What this computer keeps is forgotten only when it is this pairing: a tab
+  // not remembered, or one left over from before another pairing was kept,
+  // leaves that other pairing and its draft alone.
+  if (storedIsThis(await store.recall(), relayToken)) {
+    await store.forget();
+    sentItems = [];
+    el.again.hidden = true;
+  } else {
+    store.dropWrites();
+    await offerRemembered({ auto: false });
+  }
   tellOtherTabs(token);
   say("Unlinked. Pair again to use Captry here.", "warn");
 });
 
 // Other tabs of this page hear of an Unlink or a Forget here and close the
-// library too, so none of them keeps showing it, or writes it back to the
-// storage just cleared. Only a hash of the relay token goes between them.
+// library too when it is the same pairing, so none of them keeps showing it,
+// or writes it back to the storage just cleared. A tab paired with another
+// phone, or not remembered and paired apart, carries on. Only a hash of the
+// relay token goes between them; null matches only a library without one.
 const tabs = (() => {
   try {
     return new BroadcastChannel("captry-desktop");
@@ -716,10 +736,8 @@ function tellOtherTabs(token) {
 
 tabs?.addEventListener("message", async (event) => {
   if (event.data?.type !== "unlinked") return;
-  // A library that is not remembered was not in the storage just cleared:
-  // closed only when it is the same pairing.
-  const mine = opened?.relayToken ? await sha256Hex(new TextEncoder().encode(opened.relayToken)) : null;
-  const closing = opened && (!opened.ephemeral || (event.data.token && event.data.token === mine));
+  const mine = opened ? await tokenHash(opened.relayToken) : undefined;
+  const closing = !!opened && event.data.token === mine;
   if (closing) {
     if (unlinkDialog.open) unlinkDialog.close();
     closeOpened();
@@ -735,11 +753,22 @@ tabs?.addEventListener("message", async (event) => {
     if (!(await store.recall())) await store.forget();
   }
   if (closing || !opened) {
+    // What this computer keeps now, if anything: another pairing may still be.
     sentItems = [];
-    el.again.hidden = true;
+    await offerRemembered({ auto: false });
     if (closing) say("Unlinked in another tab. Pair again to use Captry here.", "warn");
   }
 });
+
+/** What goes between tabs for a relay token: its hash, or null for none. */
+async function tokenHash(relayToken) {
+  return relayToken ? sha256Hex(new TextEncoder().encode(relayToken)) : null;
+}
+
+/** Whether what this computer keeps ([saved]) is the pairing with [relayToken]. */
+function storedIsThis(saved, relayToken) {
+  return !!saved && (saved.relayToken ?? null) === relayToken;
+}
 
 async function sha256Hex(bytes) {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
@@ -873,7 +902,7 @@ if (bookmarklet) {
 el.composeCancel.addEventListener("click", () => {
   resetCompose();
   el.compose.close();
-  store.saveDraft(null);
+  dropDraft();
 });
 
 function describeDestination() {
@@ -1097,6 +1126,14 @@ async function saveDraft() {
   await store.saveDraft(sealed);
 }
 
+/**
+ * Clears the kept draft after Discard or Send. A pairing not remembered never
+ * kept one, and the draft there belongs to the pairing that is.
+ */
+function dropDraft() {
+  if (opened && !opened.ephemeral) store.saveDraft(null);
+}
+
 /** Puts a kept draft back into New capture, without opening it. */
 async function restoreDraft() {
   const key = opened?.key;
@@ -1233,7 +1270,7 @@ el.compose.addEventListener("submit", async (event) => {
     await saveSent(record);
     resetCompose();
     el.compose.close();
-    store.saveDraft(null);
+    dropDraft();
     mergeSent();
     renderNav();
     refresh();
@@ -1344,10 +1381,14 @@ async function syncFeed() {
   lastFeedLook = Date.now();
   feedRunning = true;
   const target = opened;
+  // Whether the look stopped before the last entry; only one that gets there
+  // may say "Up to date".
+  let short = true;
   try {
     let changed = 0;
     let counted = false;
-    for (;;) {
+    pages: for (let pages = 1; ; pages++) {
+      const before = feed.seq;
       const page = await relay.feedSince(target.relayToken, feed.seq);
       if (opened !== target) return;
       // Entries were dropped for age or room after this library was made,
@@ -1356,15 +1397,42 @@ async function syncFeed() {
         feed.missing = true;
       }
       for (const entry of page.entries) {
-        feed.seq = entry.seq;
+        // Only a number past the last: the place is kept, and one set
+        // anywhere else would stop updates until pairing again.
+        const seq = feedSeqAfter(entry?.seq, feed.seq);
+        if (seq === null) continue;
         lastPhoneAt = Math.max(lastPhoneAt, entry.createdAt ?? 0);
+        // The place moves past an entry only once it is dealt with for good:
+        // applied, passed over on purpose, or gone from the relay.
         // Written well before the library was made: already in it.
-        if (entry.createdAt < feed.since - 5 * 60_000) continue;
-        const body = await openFeed(target.key, await relay.feedEntry(target.relayToken, entry.seq));
-        if (!body || body.at < feed.since) continue;
+        if (entry.createdAt < feed.since - 5 * 60_000) {
+          feed.seq = seq;
+          continue;
+        }
+        let sealed;
+        try {
+          sealed = await relay.feedEntry(target.relayToken, entry.seq);
+        } catch (e) {
+          // Refused for now or not reached: stop here, and the next look
+          // asks for this one again.
+          if (relay.afterFeedEntryFailed(e?.status) === "stop") break pages;
+          // Trimmed between the list and the fetch: a change was lost.
+          feed.missing = true;
+          feed.seq = seq;
+          continue;
+        }
+        if (opened !== target) return;
+        const body = await openFeed(target.key, sealed);
+        if (!body || body.at < feed.since) {
+          feed.seq = seq;
+          continue;
+        }
         // Served again by the relay, or not numbered as the phone numbers them.
         const count = feedCounterAfter(body, feed.n);
-        if (!count.apply) continue;
+        if (!count.apply) {
+          feed.seq = seq;
+          continue;
+        }
         if (feed.n !== count.highest) {
           feed.n = count.highest;
           counted = true;
@@ -1376,9 +1444,14 @@ async function syncFeed() {
           return;
         }
         changed += applyChanges(body.changes);
+        feed.seq = seq;
       }
-      if (page.entries.length < 500) break;
+      if (!relay.moreFeedPages(page.entries.length, before, feed.seq, pages)) {
+        short = false;
+        break;
+      }
     }
+    feed.short = short;
     updateSync();
     // The counter is kept with the library even when nothing shown changed.
     if (counted && !changed) persistLibrary();
@@ -1399,6 +1472,10 @@ async function syncFeed() {
     }
   } catch (e) {
     // Offline for a moment, or the relay is busy: the next look tries again.
+    if (opened === target) {
+      feed.short = true;
+      updateSync();
+    }
   } finally {
     feedRunning = false;
     if (feedAgain && opened) {
@@ -2623,7 +2700,7 @@ async function openFromCache(saved) {
     paused: !!payload.paused,
   };
   const n = payload.feed?.n;
-  feed = { seq: payload.feed?.seq ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false };
+  feed = { seq: feedSeqAfter(payload.feed?.seq, 0) ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false };
   sentItems = await loadSent(saved.key);
   await settleSent();
   showOpened(null);
@@ -3569,7 +3646,7 @@ function updateSync() {
   } else if (waiting) {
     [state, short, full, detail] = ["saving", `${waiting} queued`, `${changes} queued`,
       "Your phone applies them the next time it checks in."];
-  } else if (liveUp) {
+  } else if (liveUp && !feed.short) {
     [state, short, full] = ["ok", "Synced", "Up to date"];
     detail = lastPhoneAt ? `Last change ${ago(lastPhoneAt, now)}` : "Connected to your phone";
   } else {

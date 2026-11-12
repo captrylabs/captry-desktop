@@ -112,6 +112,27 @@ export async function sealPairedKey(key, contentKey, nonce = crypto.getRandomVal
 }
 
 /** "Chrome on Windows", for the phone to show who is asking. */
+/** How long the relay keeps a code open for a phone to answer (OFFER_TTL_MS in worker/feedback/src/pairing.js). */
+export const PAIR_CODE_MS = 10 * 60_000;
+
+/**
+ * How long to wait for the sealed key once the phone has answered: the time
+ * for the person to read the computer's name and tap Pair, and for the phone
+ * to measure the library first. As long again as the code was open, which is
+ * plenty, and well inside the hour the relay keeps the slot.
+ */
+export const PAIR_KEY_MS = 10 * 60_000;
+
+/**
+ * Whether the wait for the phone is over at [now]: "code" when no phone
+ * answered within PAIR_CODE_MS of [started], "key" when one answered at
+ * [answeredAt] but its key has not come within PAIR_KEY_MS, else null.
+ */
+export function pairWaitOver(now, started, answeredAt) {
+  if (answeredAt === null) return now - started > PAIR_CODE_MS ? "code" : null;
+  return now - answeredAt > PAIR_KEY_MS ? "key" : null;
+}
+
 export function browserLabel() {
   const ua = navigator.userAgent;
   const browser = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "A browser";
