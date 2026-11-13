@@ -772,6 +772,85 @@
     .inline-edit.note-edit { min-height: 90px; resize: vertical; line-height: 1.5; }
     .inline-hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 
+    /* A note drawn with its markup, the way the phone shows it: bold at the
+       heaviest weight, italic as a slant, headings at the phone's 22, 16 and
+       14 against its 16, and bold. A heading's weight wins over bold in it.
+       The phone slants italic by skewing the upright letters about 12°; the
+       page's font has its own slant, up to 10°, which oblique cannot reach
+       because the face is declared upright, so the axis is set directly
+       (with the body's other two, which this replaces). */
+    .nm-b { font-weight: 900; }
+    .nm-i { font-variation-settings: "ROND" 100, "opsz" 18, "slnt" -10; }
+    .nm-s { text-decoration: line-through; }
+    .nm-h1, .nm-h2, .nm-h3 { font-weight: 700; }
+    .nm-h1 { font-size: 1.375em; line-height: 1.3; }
+    .nm-h3 { font-size: 0.875em; }
+    /* The phone's 24dp checkbox over the box glyph and its gap. */
+    .note-tick { display: inline-grid; place-items: center; width: 1.5em; height: 1.5em; margin: 0 0.3em 0 -0.2em; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); vertical-align: -0.45em; cursor: pointer; }
+    .note-tick svg { display: block; width: 100%; height: 100%; }
+    .note-tick[aria-checked="true"] { color: var(--accent); }
+    .note-tick:hover:not(:disabled) { color: var(--ink); }
+    .note-tick[aria-checked="true"]:hover:not(:disabled) { color: var(--accent); }
+    .note-tick:disabled { cursor: default; }
+    .note-tick:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+    /* Each column as wide as its widest cell, up to the note's width, the last
+       one taking what is left; a table wider than the note scrolls rather
+       than squeezing its cells. */
+    .nm-table-wrap { container-type: inline-size; margin: 8px 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; white-space: normal; }
+    .prose > .nm-table-wrap:first-child { margin-top: 2px; }
+    .prose > .nm-table-wrap:last-child { margin-bottom: 0; }
+    .nm-table { width: 100%; border-collapse: collapse; }
+    .nm-table th, .nm-table td { border: 1px solid var(--line); }
+    .nm-table tr > :first-child { border-left: 0; }
+    .nm-table tr > :last-child { border-right: 0; }
+    .nm-table thead th { border-top: 0; }
+    .nm-table tbody tr:last-child > * { border-bottom: 0; }
+    .nm-table th { padding: 2px 8px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--muted); font-size: 11px; font-weight: 500; line-height: 16px; text-align: center; white-space: nowrap; }
+    .nm-table th::before { content: attr(data-label); }
+    .nm-table td { padding: 8px 12px; vertical-align: top; }
+    .nm-table td:last-child { width: 100%; }
+    .nm-cell { width: max-content; min-width: 32px; max-width: calc(100cqi - 24px); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .nm-table td.num { text-align: right; }
+    .nm-table td.num .nm-cell { margin-left: auto; }
+    .nm-table td.sum, .nm-table td.total { font-weight: 700; }
+    @media (prefers-color-scheme: dark) {
+      /* A faint wash vanishes on a dark page, so it gets a stronger one, as on the phone. */
+      .nm-table th { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+    }
+
+    /* The note editor (note-editor.js): the phone's outlined box with its
+       toolbar along the top, the words drawn as the note above shows them. */
+    .note-editor { border: 1px solid var(--accent); border-radius: 12px; background: var(--paper); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); white-space: normal; max-width: none; }
+    .ne-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+    .ne-tool { display: inline-grid; place-items: center; min-width: 32px; height: 32px; padding: 0 4px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+    .ne-tool svg { display: block; }
+    .ne-tool:hover:not(:disabled) { background: var(--well); color: var(--ink); }
+    .ne-tool[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .ne-tool:disabled { opacity: 0.4; cursor: default; }
+    .ne-tool.ne-heading { font-size: 15px; font-weight: 800; }
+    .ne-sep { align-self: stretch; width: 1px; margin: 6px 4px; background: var(--line); }
+    .ne-body { padding: 10px 12px 12px; min-height: 90px; cursor: text; }
+    .ne-surface { white-space: pre-wrap; overflow-wrap: anywhere; outline: none; caret-color: var(--accent); }
+    .ne-text { min-height: 1.5em; }
+    .ne-text.ne-empty::before { content: attr(data-placeholder); position: absolute; color: var(--muted); pointer-events: none; }
+    .ne-box { cursor: pointer; user-select: none; }
+    .ne-table { margin: 8px 0; }
+    .ne-table > .nm-table-wrap { margin: 0; }
+    .ne-table .nm-table td { cursor: text; }
+    .ne-table .nm-table td:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+    .ne-cell { min-height: 1.5em; }
+    .ne-table-bar { display: flex; align-items: center; gap: 4px; padding: 4px 0 0; }
+    .ne-bar-button { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .ne-bar-button:hover { background: var(--well); color: var(--ink); }
+    .ne-bar-space { flex: 1; }
+    .ne-menu-holder { position: relative; }
+    @media (max-width: 480px) {
+      /* All ten tools on one row on a phone-sized window. */
+      .ne-tool { min-width: 28px; padding: 0 2px; }
+      .ne-sep { margin: 6px 1px; }
+    }
+    .ne-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 200px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); box-shadow: 0 14px 40px rgba(8, 11, 31, 0.22); }
+
     /* Pictures fade in as they load. */
     img.fade { opacity: 0; transition: opacity 0.25s ease; }
     img.fade.loaded, img.fade.missing { opacity: 1; }
@@ -1110,17 +1189,19 @@
   <script type="importmap">
     {
       "integrity": {
-        "/desktop/library-format.js?v=75": "sha384-+zKNBnVn2nND+Qa1cbbvKh9rvpKJHsdwrGx8gqDtmKxL0OJzp+mbTtDxuA6x/qqa",
-        "/desktop/library.js?v=75": "sha384-GU9WseXI9npzv5l3YXfOMu0O8OFhAFMGHBpUv2xURaq/9QOLhlgOMsZzGy4t9v/V",
-        "/desktop/list-lines.js?v=75": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
-        "/desktop/pair.js?v=75": "sha384-jFmPEgw7vAF+iZ+x/KmI2GW+sXRgf0OXA92PbBqJmP9o/o7pkYc0OOlc6+lxM1Yv",
-        "/desktop/qr.js?v=75": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
-        "/desktop/relay.js?v=75": "sha384-XIdV3jnanSFFjGB3Q68CJ8Ih1OflxyHa8r+XQ9XBcMgK2qXs47tqWnkI8fcoTqsk",
-        "/desktop/store.js?v=75": "sha384-lIGl0v2EKjqKzjErePufgAaWStOjiIWBt9RJsSKVdq9pF126F9TU/pDpzA1YIlha",
-        "/desktop/viewer.js?v=75": "sha384-oM7faeWIHxIZJaAiWMA76duuxseCAjaWN4OzDenUxQ7Y18kqDYCdRI/BLO3xGxVf"
+        "/desktop/library-format.js?v=76": "sha384-+zKNBnVn2nND+Qa1cbbvKh9rvpKJHsdwrGx8gqDtmKxL0OJzp+mbTtDxuA6x/qqa",
+        "/desktop/library.js?v=76": "sha384-GU9WseXI9npzv5l3YXfOMu0O8OFhAFMGHBpUv2xURaq/9QOLhlgOMsZzGy4t9v/V",
+        "/desktop/list-lines.js?v=76": "sha384-9L1YWGQUzEnCzOMdojYljwo/NEOXCfS0umS5madoBPSFPC8wDFW4ifwizNhTRFJI",
+        "/desktop/note-editor.js?v=76": "sha384-PedOd1c5NLxnT9TGJkwTx/ifiG7RLcYLNkFrtaCKoENDlGSkP+5myFrk7w0BJCRd",
+        "/desktop/note-markup.js?v=76": "sha384-9WGx0fCqVuHtKpqN2p/zWcmAfX9rq62K/LmuKuXNsDfcA3I33f392hK8G30/cqWY",
+        "/desktop/pair.js?v=76": "sha384-jFmPEgw7vAF+iZ+x/KmI2GW+sXRgf0OXA92PbBqJmP9o/o7pkYc0OOlc6+lxM1Yv",
+        "/desktop/qr.js?v=76": "sha384-x324SkS85R46f5hvb/mSHEXyqjh9mAAt7/dQYcxAKJkRZd3LLn+KL6pfwZx4a9lA",
+        "/desktop/relay.js?v=76": "sha384-XIdV3jnanSFFjGB3Q68CJ8Ih1OflxyHa8r+XQ9XBcMgK2qXs47tqWnkI8fcoTqsk",
+        "/desktop/store.js?v=76": "sha384-lIGl0v2EKjqKzjErePufgAaWStOjiIWBt9RJsSKVdq9pF126F9TU/pDpzA1YIlha",
+        "/desktop/viewer.js?v=76": "sha384-2ZzfYSyt4RPBagmcXv4qJU8RCxzbN90lEI0zuXyiyoDBekJKyTOBPFDw07wy0zmv"
       }
     }
   </script>
-  <script type="module" src="./viewer.js?v=75" integrity="sha384-oM7faeWIHxIZJaAiWMA76duuxseCAjaWN4OzDenUxQ7Y18kqDYCdRI/BLO3xGxVf"></script>
+  <script type="module" src="./viewer.js?v=76" integrity="sha384-2ZzfYSyt4RPBagmcXv4qJU8RCxzbN90lEI0zuXyiyoDBekJKyTOBPFDw07wy0zmv"></script>
 </body>
 </html>

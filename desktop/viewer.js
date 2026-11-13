@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=75";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=76";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,18 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=75";
-import * as lines from "./list-lines.js?v=75";
-import * as store from "./store.js?v=75";
-import * as relay from "./relay.js?v=75";
-import * as pair from "./pair.js?v=75";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=75";
+} from "./library.js?v=76";
+import * as lines from "./list-lines.js?v=76";
+import * as markup from "./note-markup.js?v=76";
+import { noteEditor } from "./note-editor.js?v=76";
+import * as store from "./store.js?v=76";
+import * as relay from "./relay.js?v=76";
+import * as pair from "./pair.js?v=76";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=76";
 
 const PAGE = 150;
+/** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
+const MAX_NOTE = 1_000_000;
 let lastShownId = null;
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -75,13 +79,26 @@ const ICONS = {
   download: "M12 4v11M7 10l5 5 5-5M5 20h14",
   refresh: "M4 12a8 8 0 0 1 13.7-5.7L20 8.5M20 3.5v5h-5M20 12a8 8 0 0 1-13.7 5.7L4 15.5M4 20.5v-5h5",
   grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+  undo: "M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
+  redo: "M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
+  bold: "M7 5h6a3.5 3.5 0 0 1 0 7H7zM7 12h7a3.5 3.5 0 0 1 0 7H7z",
+  italic: "M10 5h8M6 19h8M14 5l-4 14",
+  strike: "M5 12h14M16.5 7.5C15.8 6 14.2 5 12 5 9.5 5 8 6.3 8 8c0 1.5 1 2.4 2.6 3M8 16.5c.6 1.6 2.3 2.5 4.3 2.5 2.6 0 4.2-1.3 4.2-3.2 0-.7-.2-1.3-.6-1.8",
+  bulletList: "M10 6h10M10 12h10M10 18h10M4.5 5.3a.7.7 0 1 0 0 1.4.7.7 0 1 0 0-1.4zM4.5 11.3a.7.7 0 1 0 0 1.4.7.7 0 1 0 0-1.4zM4.5 17.3a.7.7 0 1 0 0 1.4.7.7 0 1 0 0-1.4z",
+  numberList: "M10 6h10M10 12h10M10 18h10M4 4.5l1.5-1V9M3.5 14.6c.3-.7.9-1.1 1.7-1.1.9 0 1.5.6 1.5 1.4 0 1.4-3.2 2.3-3.2 4.1h3.3",
+  checklist: "M11 7h9M11 17h9M3.5 7l2 2 3.5-4M3.5 17l2 2 3.5-4",
+  table: "M4 5h16v14H4zM4 10h16M4 15h16M10 5v14",
+  plus: "M12 5v14M5 12h14",
+  sum: "M17 5H7l5 7-5 7h10",
+  tableRows: "M4 5h16v14H4zM4 12h16",
+  tableColumns: "M4 5h16v14H4zM12 5v14",
 };
 
 /** An icon as an element. The paths are fixed strings above, never data. */
 function icon(name, size = 16) {
   const span = document.createElement("span");
   span.style.display = "contents";
-  span.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${name === "more" || name === "grip" ? 3 : 1.9}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+  span.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${name === "more" || name === "grip" ? 3 : name === "bold" ? 2.5 : 1.9}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
   return span.firstChild;
 }
 
@@ -873,11 +890,13 @@ document.addEventListener("dragleave", () => {
 });
 document.addEventListener("dragover", (event) => {
   if (opened && !el.app.hidden && !el.compose.open && carriesSomething(event)) event.preventDefault();
+  // Over a note being written, a drop goes into the note, not to the phone.
+  if (dragDepth) dropHint.hidden = !!event.target.closest?.(".note-editor");
 });
 document.addEventListener("drop", (event) => {
   dragDepth = 0;
   dropHint.hidden = true;
-  if (!opened || el.app.hidden || el.compose.open) return;
+  if (!opened || el.app.hidden || el.compose.open || event.target.closest?.(".note-editor")) return;
   const file = [...(event.dataTransfer?.files ?? [])].find((f) => f.type.startsWith("image/"));
   const text = (event.dataTransfer?.getData("text/uri-list") || event.dataTransfer?.getData("text/plain") || "")
     .split("\n").filter((l) => l && !l.startsWith("#")).join("\n").trim();
@@ -1662,7 +1681,7 @@ const pendingEdits = new Map();
 
 /** Whether a rename, note or collection box is open in the capture panel. */
 function editorOpen() {
-  return !!el.detail.querySelector(".editor:not([hidden]), .inline-edit");
+  return !!el.detail.querySelector(".editor:not([hidden]), .inline-edit, .note-editor");
 }
 
 /**
@@ -1670,7 +1689,7 @@ function editorOpen() {
  * Ctrl or Cmd+Enter a note, and clicking away saves either; Esc puts it back.
  */
 function inlineEdit(c, field) {
-  if (!editable(c) || el.detail.querySelector(".inline-edit")) return;
+  if (!editable(c) || el.detail.querySelector(".inline-edit, .note-editor")) return;
   let host;
   if (field === "title") {
     host = el.detail.querySelector("h2");
@@ -1687,30 +1706,17 @@ function inlineEdit(c, field) {
   }
   if (!host) return;
   const start = field === "title" ? (c.title ?? titleOf(c)) : (c.note ?? "");
-  const input = document.createElement(field === "title" ? "input" : "textarea");
-  input.className = `inline-edit ${field}-edit`;
-  input.value = start;
-  input.setAttribute("aria-label", field === "title" ? "Title" : "Note");
-  if (field === "note") input.placeholder = "Why you saved this, or anything else";
-  host.replaceChildren(input);
-  host.classList.remove("editable");
-  if (field === "note") {
-    const hint = document.createElement("p");
-    hint.className = "inline-hint";
-    hint.textContent = `${MAC ? "⌘" : "Ctrl"}+Enter to save · Esc to cancel`;
-    host.after(hint);
-    const grow = () => {
-      input.style.height = "auto";
-      input.style.height = `${Math.max(90, input.scrollHeight + 2)}px`;
-    };
-    input.addEventListener("input", grow);
-    requestAnimationFrame(grow);
-  }
   let done = false;
+  let read = () => "";
   const finish = (save) => {
     if (done) return;
+    const value = read().trim();
+    // The phone refuses words past DesktopChanges.MAX_TEXT; say so here rather than lose them there.
+    if (save && field === "note" && value.length > MAX_NOTE) {
+      toast("That note is too long to send.");
+      return;
+    }
     done = true;
-    const value = input.value.trim();
     if (save && value !== start.trim()) {
       const from = field === "title" ? (c.title ?? null) : (c.note ?? null);
       sendChange(c, [{ op: field, from, to: value || null }]);
@@ -1718,12 +1724,38 @@ function inlineEdit(c, field) {
       renderDetail(c);
     }
   };
+  host.classList.remove("editable");
+  if (field === "note") {
+    // The phone's editor: the markup shown as it will look, its toolbar and its tables.
+    const editor = noteEditor(start, {
+      icon,
+      mac: MAC,
+      placeholder: "Why you saved this, or anything else",
+      onSave: () => finish(true),
+      onCancel: () => finish(false),
+      onLeave: () => finish(true),
+    });
+    read = editor.value;
+    host.replaceChildren(editor.element);
+    const hint = document.createElement("p");
+    hint.className = "inline-hint";
+    hint.textContent = `${MAC ? "⌘" : "Ctrl"}+Enter to save · Esc to cancel`;
+    host.after(hint);
+    editor.focus();
+    return;
+  }
+  const input = document.createElement("input");
+  input.className = `inline-edit ${field}-edit`;
+  input.value = start;
+  input.setAttribute("aria-label", "Title");
+  read = () => input.value;
+  host.replaceChildren(input);
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       finish(false);
-    } else if (event.key === "Enter" && (field === "title" || event.ctrlKey || event.metaKey)) {
+    } else if (event.key === "Enter") {
       event.preventDefault();
       finish(true);
     }
@@ -4593,6 +4625,7 @@ function renderDetail(c) {
   } else if (c.note) {
     const s = section("Your note", c.note);
     s.classList.add("note-section");
+    s.lastChild.replaceChildren(noteBody(c, words));
     if (editable(c)) {
       s.lastChild.classList.add("editable");
       s.lastChild.title = "Click to edit";
@@ -4902,6 +4935,156 @@ function shortWhen(ms) {
   if (d.toDateString() === today.toDateString()) return d.toLocaleTimeString(undefined, { timeStyle: "short" });
   if (d.getFullYear() === today.getFullYear()) return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return d.toLocaleDateString(undefined, { dateStyle: "medium" });
+}
+
+/**
+ * The note the way the phone shows it: its markup drawn rather than its
+ * asterisks and pipes. A checklist box ticks its line on the phone, the way
+ * a list's line does, when [c] can be changed from here.
+ */
+function noteBody(c, words) {
+  const note = c.note ?? "";
+  // A box is named as list-lines.js names a line: its place among the
+  // note's checklist lines, and its words.
+  const all = lines.listLines(note);
+  const lineAt = new Map();
+  let at = 0;
+  for (const line of note.split("\n")) {
+    if (markup.parsePrefix(line).kind === "checklist") lineAt.set(at, all[lineAt.size]);
+    at += line.length + 1;
+  }
+  const frag = document.createDocumentFragment();
+  const blocks = markup.parseBlocks(note);
+  blocks.forEach((block, i) => {
+    if (block.type === "table") {
+      frag.append(noteTable(block, words));
+      return;
+    }
+    // Lines before a table end in the break the table starts on, which the
+    // table's own box already makes.
+    let shown = note.slice(block.start, block.end);
+    if (i < blocks.length - 1 && shown.endsWith("\n")) shown = shown.slice(0, -1);
+    const div = document.createElement("div");
+    div.className = "nm-text";
+    div.append(markupText(shown, words, (box) => noteTick(c, lineAt.get(block.start + box.lineStart), box.checked)));
+    frag.append(div);
+  });
+  return frag;
+}
+
+/**
+ * [source] with its markup drawn as the phone's toSpanStyle draws it: bold at
+ * the heaviest weight, italic slanted, strike through, a heading larger and
+ * bold. [tick] makes the control for a checklist box; without one the box
+ * stays its glyph, as it does in a table cell on the phone.
+ */
+function markupText(source, words, tick) {
+  const { display, spans } = markup.layout(source);
+  const boxes = new Map(tick ? markup.checklistBoxes(source).map((b) => [b.displayIndex, b]) : []);
+  const cuts = new Set([0, display.length]);
+  for (const s of spans) cuts.add(s.start).add(s.end);
+  // A box is its glyph, a space and an em space; the control takes all three.
+  for (const at of boxes.keys()) cuts.add(at).add(at + 3);
+  const points = [...cuts].sort((a, b) => a - b);
+  const frag = document.createDocumentFragment();
+  for (let k = 0; k < points.length - 1; k++) {
+    const [from, to] = [points[k], points[k + 1]];
+    if (boxes.has(from)) {
+      frag.append(tick(boxes.get(from)));
+      continue;
+    }
+    // The zero-width space only keeps a caret slot in the phone's editor.
+    const text = display.slice(from, to).replaceAll("\u200b", "");
+    if (!text) continue;
+    const on = spans.filter((s) => s.start <= from && to <= s.end);
+    const level = on.find((s) => s.heading)?.heading;
+    const classes = [
+      on.some((s) => s.bold) && "nm-b",
+      on.some((s) => s.italic) && "nm-i",
+      on.some((s) => s.strike) && "nm-s",
+      level && `nm-h${level}`,
+    ].filter(Boolean);
+    if (!classes.length) {
+      frag.append(marked(text, words));
+      continue;
+    }
+    const span = document.createElement("span");
+    span.className = classes.join(" ");
+    span.append(marked(text, words));
+    frag.append(span);
+  }
+  return frag;
+}
+
+/** A checklist line's box in a note: [l] is its line as listLines has it. */
+function noteTick(c, l, checked) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "note-tick";
+  b.setAttribute("role", "checkbox");
+  b.setAttribute("aria-checked", String(checked));
+  // Named by the words as shown, not their asterisks; the change names the line as stored.
+  if (l) b.setAttribute("aria-label", `${checked ? "Untick" : "Tick"} ${markup.layout(l.text).display.replaceAll("\u200b", "")}`);
+  b.innerHTML = checked
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" fill="currentColor"/><path d="M7.5 12.5l3 3 6-6.5" fill="none" stroke="var(--accent-ink, #fff)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+    : `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+  b.disabled = !l || !editable(c);
+  b.addEventListener("click", (event) => {
+    // A tick, not the click on the note that opens it for editing.
+    event.stopPropagation();
+    sendChange(c, [{ op: "line", index: l.index, text: l.text, value: !checked }], { quiet: true, redrawNow: true });
+  });
+  return b;
+}
+
+/**
+ * A note's table as the phone draws it: A B C over the columns and 1 2 3
+ * down the side (the names its sums use), numbers to the right, a sum
+ * showing its result in bold, and a "Total" label in bold.
+ */
+function noteTable(block, words) {
+  const cols = Math.max(1, ...block.rows.map((row) => row.length));
+  const results = markup.TableMath.evaluate(block.rows.map((row) => row.map((cell) => cell.text)));
+  // The labels are drawn by CSS, so a search does not mark them.
+  const label = (text) => {
+    const th = document.createElement("th");
+    th.dataset.label = text;
+    return th;
+  };
+  const head = document.createElement("tr");
+  head.append(label(""), ...Array.from({ length: cols }, (_, i) => label(markup.TableMath.columnName(i))));
+  const thead = document.createElement("thead");
+  thead.append(head);
+  const tbody = document.createElement("tbody");
+  block.rows.forEach((row, r) => {
+    const tr = document.createElement("tr");
+    tr.append(label(String(r + 1)));
+    for (let col = 0; col < cols; col++) {
+      const text = row[col]?.text ?? "";
+      const result = results[r][col] ?? null;
+      const td = document.createElement("td");
+      const cell = document.createElement("div");
+      cell.className = "nm-cell";
+      if (result != null) {
+        td.className = "num sum";
+        cell.append(marked(result, words));
+      } else {
+        if (text.trim().toLowerCase() === "total") td.className = "total";
+        else if (markup.TableMath.isNumber(text)) td.className = "num";
+        cell.append(markupText(text, words));
+      }
+      td.append(cell);
+      tr.append(td);
+    }
+    tbody.append(tr);
+  });
+  const table = document.createElement("table");
+  table.className = "nm-table";
+  table.append(thead, tbody);
+  const wrap = document.createElement("div");
+  wrap.className = "nm-table-wrap";
+  wrap.append(table);
+  return wrap;
 }
 
 function section(heading, body) {
