@@ -12,7 +12,7 @@
 //
 // It is only DOM: the page hands it the note and is told when to save.
 
-import * as markup from "./note-markup.js?v=81";
+import * as markup from "./note-markup.js?v=82";
 
 const ZWSP = "\u200b";
 const BOX_LENGTH = 3;
@@ -183,6 +183,49 @@ export function displayChange(before, after) {
 }
 
 /**
+ * What the browser wrote into a box by itself (a composition: an accent, a
+ * CJK word) as an edit of the box's words [local], laid out as [l], [now]
+ * being what the box shows: null when that is what [l] shows already, so
+ * reading the same writing twice takes it in once. [caret], where the caret
+ * stood in [local] when the writing began (null if not known), keeps words
+ * written there at the caret's place in the note: a word composed at the end
+ * of a bold one is bold too.
+ */
+/**
+ * The word in [display] that [at] is in or touches, as { start, end }, or
+ * null: what a spelling suggestion replaces when the browser does not say.
+ */
+export function wordAround(display, at) {
+  const isWord = (ch) => /[\p{L}\p{N}\p{M}'’_-]/u.test(ch);
+  let start = at;
+  let end = at;
+  while (start > 0 && isWord(display[start - 1])) start--;
+  while (end < display.length && isWord(display[end])) end++;
+  // An apostrophe or hyphen at either edge belongs to the text around it.
+  while (start < end && /['’_-]/.test(display[start])) start++;
+  while (end > start && /['’_-]/.test(display[end - 1])) end--;
+  return start < end ? { start, end } : null;
+}
+
+export function reconcileEdit(local, l, now, caret = null) {
+  const shown = l.display;
+  if (now === shown) return null;
+  const grown = now.length - shown.length;
+  if (caret != null && grown > 0) {
+    const at = l.originalToDisplay[caret];
+    // An empty wrap's slot may have the words before or after it.
+    for (const d of shown[at] === ZWSP ? [at, at + 1] : [at]) {
+      if (now.startsWith(shown.slice(0, d)) && now.endsWith(shown.slice(d))) {
+        return insertText(local, caret, caret, now.slice(d, d + grown).replaceAll(ZWSP, ""));
+      }
+    }
+  }
+  const change = displayChange(shown, now);
+  const d2o = l.displayToOriginal;
+  return insertText(local, Math.max(0, d2o[change.from]), Math.max(0, d2o[change.to]), change.text.replaceAll(ZWSP, ""));
+}
+
+/**
  * Typing is gathered up so undo steps back a burst rather than a letter;
  * anything bigger than one character stands alone. NoteEditHistory on the
  * phone, the same 800 ms and 80 steps.
@@ -284,7 +327,13 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
   let surfaces = [];
   let shape = "";
   let rendering = false;
+  // While an input method writes (a composition), the browser owns the box's
+  // words: nothing draws them again until it is done, or the composition
+  // breaks. [composing] is the composition under way, [pending] one that
+  // has ended but whose words are not taken in yet; either way the page's
+  // words are not the note's, and its caret is not read.
   let composing = null;
+  let pending = null;
   const listening = new AbortController();
   const mod = mac ? "⌘" : "Ctrl";
 
@@ -366,6 +415,9 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
 
   /** Takes [next] as the note, remembering the step for undo, and draws it. */
   function apply(next, { record = true } = {}) {
+    // Drawing the note mid-composition would take the words from under the
+    // input method; a toolbar click mid-composition does nothing.
+    if (composing) return;
     if (record) history.record({ text: source, selectionStart: sel.start, selectionEnd: sel.end }, next);
     source = next.text;
     sel = { start: next.selectionStart, end: next.selectionEnd };
@@ -388,11 +440,13 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
   }
 
   function undo() {
+    flush();
     const back = history.undo({ text: source, selectionStart: sel.start, selectionEnd: sel.end });
     if (back) apply(back, { record: false });
   }
 
   function redo() {
+    flush();
     const forward = history.redo({ text: source, selectionStart: sel.start, selectionEnd: sel.end });
     if (forward) apply(forward, { record: false });
   }
@@ -418,11 +472,15 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
       local,
       contains: (p) => (after ? p === source.length : p >= base && p <= base + local.length),
       toLocal: (p) => p - base,
-      commit(next) {
+      /** The note with [next] as this box's words. */
+      whole(next) {
         const stored = after ? (next.text ? lead + next.text : "") : trimBreak && next.text ? next.text + "\n" : next.text;
         const end = after ? source.length : block.end;
         const shift = base + (next.text ? lead.length : 0);
-        apply(edit(source.slice(0, base) + stored + source.slice(end), shift + next.selectionStart, shift + next.selectionEnd));
+        return edit(source.slice(0, base) + stored + source.slice(end), shift + next.selectionStart, shift + next.selectionEnd);
+      },
+      commit(next) {
+        apply(this.whole(next));
       },
     };
   }
@@ -440,11 +498,15 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
       local: cell?.text ?? "",
       contains: (p) => cell != null && p >= cell.start && p <= cell.end,
       toLocal: (p) => (cell ? p - cell.start : 0),
-      commit(next) {
+      /** The note with [next] as this cell's words. */
+      whole(next) {
         const rows = table.rows.map((r, ri) => Array.from({ length: columns }, (_, ci) =>
           (ri === row && ci === col ? next.text : r[ci]?.text ?? "")));
-        apply(markup.replaceTable(source, table, rows, row, col,
-          Math.min(next.selectionStart, next.text.length), Math.min(next.selectionEnd, next.text.length)));
+        return markup.replaceTable(source, table, rows, row, col,
+          Math.min(next.selectionStart, next.text.length), Math.min(next.selectionEnd, next.text.length));
+      },
+      commit(next) {
+        apply(this.whole(next));
       },
     };
   }
@@ -835,7 +897,8 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
   // queued), so a key that follows an arrow at once would land where the
   // caret was; every edit reads it first.
   function syncCaret() {
-    if (!rendering && !composing && root.contains(document.activeElement)) readCaret();
+    flush();
+    if (!rendering && !composing && !pending && root.contains(document.activeElement)) readCaret();
   }
 
   /** Runs [fn] on the focused box's words at its selection and puts the result back. */
@@ -857,8 +920,55 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
     return { start: Math.max(0, d2o[Math.min(a, b)]), end: Math.max(0, d2o[Math.max(a, b)]) };
   }
 
+  /**
+   * What a word or line delete takes: the page's target range, or, where it
+   * gives none (Chrome in a plaintext-only box gives none for Ctrl+Backspace)
+   * or an empty one, the caret's own move by a word or to the line's edge,
+   * read with Selection.modify and put back.
+   */
+  function deleteTarget(s, event) {
+    const r = rangeOfTarget(s, event);
+    return r && r.start !== r.end ? r : rangeByMoving(s, event.inputType) ?? r;
+  }
+
+  function rangeByMoving(s, type) {
+    const selection = getSelection();
+    if (!s.layout || !selection.modify || !selection.rangeCount) return null;
+    const saved = selection.getRangeAt(0).cloneRange();
+    if (!s.el.contains(saved.startContainer)) return null;
+    const unit = type.includes("Word") ? "word" : "lineboundary";
+    const caret = displayOffset(s.el, saved.startContainer, saved.startOffset);
+    const reach = (direction) => {
+      selection.collapse(saved.startContainer, saved.startOffset);
+      selection.modify("extend", direction, unit);
+      const node = selection.focusNode;
+      // Moved out of the box: as far as the box goes.
+      if (!node || !s.el.contains(node)) return direction === "backward" ? 0 : s.display.length;
+      return displayOffset(s.el, node, selection.focusOffset);
+    };
+    rendering = true;
+    try {
+      const back = type.includes("Forward") ? caret : reach("backward");
+      const on = type.includes("Backward") ? caret : reach("forward");
+      const d2o = s.layout.displayToOriginal;
+      const [lo, hi] = [Math.min(back, on, caret), Math.max(back, on, caret)];
+      return { start: Math.max(0, d2o[lo]), end: Math.max(0, d2o[hi]) };
+    } catch {
+      return null;
+    } finally {
+      selection.removeAllRanges();
+      selection.addRange(saved);
+      rendering = false;
+    }
+  }
+
+  // What an input method writes, the browser writes itself, and it is read
+  // back when the composition is done. Safari names its last steps
+  // insertFromComposition and deleteByComposition.
+  const COMPOSITION_INPUT = new Set(["insertCompositionText", "deleteCompositionText", "insertFromComposition", "deleteByComposition"]);
+
   body.addEventListener("beforeinput", (event) => {
-    if (event.isComposing || event.inputType === "insertCompositionText" || event.inputType === "deleteCompositionText") return;
+    if (composing || event.isComposing || COMPOSITION_INPUT.has(event.inputType)) return;
     syncCaret();
     const s = current();
     if (!s) return;
@@ -868,9 +978,20 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
     const words = event.data ?? event.dataTransfer?.getData("text/plain") ?? "";
     if (type === "insertText" || type === "insertReplacementText" || type === "insertFromYank") {
       const target = type === "insertReplacementText" ? rangeOfTarget(s, event) : null;
-      editLocal((local, start, end) => (target
-        ? insertText(local, target.start, target.end, words)
-        : insertText(local, start, end, words)));
+      editLocal((local, start, end, box) => {
+        if (target && target.start !== target.end) return insertText(local, target.start, target.end, words);
+        // A spelling suggestion with no range (Chrome gives none in a
+        // plaintext-only box) takes the place of the word at the caret.
+        if (type === "insertReplacementText" && start === end && box.layout) {
+          const at = box.layout.originalToDisplay[start];
+          const word = wordAround(box.layout.display, at);
+          if (word) {
+            const d2o = box.layout.displayToOriginal;
+            return insertText(local, Math.max(0, d2o[word.start]), Math.max(0, d2o[word.end]), words);
+          }
+        }
+        return insertText(local, start, end, words);
+      });
     } else if (type === "insertParagraph" || type === "insertLineBreak") {
       if (s.kind === "cell") nextCell(s, true);
       else editLocal((local, start, end) => insertNewline(local, start, end));
@@ -882,9 +1003,11 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
     } else if (type.startsWith("delete")) {
       editLocal((local, start, end) => {
         if (start !== end) return deleteRange(local, start, end);
-        const target = rangeOfTarget(s, event);
+        const target = deleteTarget(s, event);
         if (!target) return null;
-        return type.includes("Backward") ? deleteRange(local, target.start, start) : deleteRange(local, start, Math.max(start, target.end));
+        if (type.includes("Backward")) return deleteRange(local, Math.min(target.start, start), start);
+        if (type.includes("Forward")) return deleteRange(local, start, Math.max(start, target.end));
+        return deleteRange(local, target.start, target.end);
       });
     } else if (type === "historyUndo") {
       undo();
@@ -907,42 +1030,70 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
 
   // The browser writes a composition (an accent, a CJK word) itself; when it
   // is done, what it wrote is read back and made an edit of the note.
-  body.addEventListener("compositionstart", () => {
-    syncCaret();
-    const s = current();
-    composing = s ? { key: s.key, display: s.display, sel: localSel(s) } : null;
-  });
-  body.addEventListener("compositionend", () => setTimeout(() => {
-    const was = composing;
-    composing = null;
-    if (was) reconcile(was);
-  }));
-  // Anything else the browser wrote by itself (it should not) is taken in the same way.
-  body.addEventListener("input", (event) => {
-    if (composing || event.isComposing) return;
-    const s = current();
-    if (s) reconcile({ key: s.key, display: s.display, sel: localSel(s) });
-  });
+  const snapshot = (s) => ({ key: s.key, source, sel: localSel(s) });
 
-  function reconcile(was) {
-    const s = surfaces.find((x) => x.key === was.key);
-    if (!s) return;
-    const now = domText(s.el);
-    if (now === was.display) return;
-    const change = displayChange(was.display, now);
-    const words = change.text.replaceAll(ZWSP, "");
-    if (!s.layout) {
-      s.commit(edit(words, words.length));
+  body.addEventListener("compositionstart", () => {
+    if (composing) return;
+    if (pending) {
+      // Straight on from the last one (Korean writes a composition a
+      // syllable): both are taken in together when this one ends.
+      composing = pending;
+      pending = null;
       return;
     }
-    const d2o = s.layout.displayToOriginal;
-    const o2d = s.layout.originalToDisplay;
-    // Written where the caret was: kept at the caret's place in the note, so
-    // a word composed at the end of a bold one is bold too.
-    const atCaret = change.from === change.to && o2d[was.sel.end] === change.from;
-    const from = atCaret ? was.sel.end : Math.max(0, d2o[change.from]);
-    const to = atCaret ? was.sel.end : Math.max(0, d2o[change.to]);
-    s.commit(insertText(s.local, from, to, words));
+    syncCaret();
+    const s = current();
+    composing = s ? snapshot(s) : null;
+  });
+  body.addEventListener("compositionend", () => {
+    if (!composing) return;
+    pending = composing;
+    composing = null;
+    // Read a moment later, when the browser has written its last; a new
+    // composition by then waits to be read with this one.
+    setTimeout(flush);
+  });
+  // Anything else the browser wrote by itself is taken in the same way; in
+  // Firefox the last of a composition comes here, after it has ended.
+  body.addEventListener("input", (event) => {
+    if (composing || event.isComposing) return;
+    if (pending) return flush();
+    const s = current();
+    if (s) reconcile(snapshot(s));
+  });
+
+  /** Takes in what the browser wrote in the composition that has ended, if any is waiting. */
+  function flush() {
+    if (composing || !pending) return;
+    const was = pending;
+    pending = null;
+    reconcile(was);
+  }
+
+  /**
+   * What the browser wrote in [was]'s box, as { s, next }: the box's words
+   * against the note as it is now, so what is in already is not written
+   * again. The caret where the writing began counts only if the note has
+   * not changed since.
+   */
+  function written(was) {
+    const s = surfaces.find((x) => x.key === was.key);
+    if (!s) return null;
+    const now = domText(s.el);
+    if (now === s.display) return null;
+    if (!s.layout) {
+      // A sum's result written over: the cell is what was written.
+      const words = displayChange(s.display, now).text.replaceAll(ZWSP, "");
+      return { s, next: edit(words, words.length) };
+    }
+    const caret = was.source === source && was.sel.start === was.sel.end ? was.sel.end : null;
+    const next = reconcileEdit(s.local, s.layout, now, caret);
+    return next && { s, next };
+  }
+
+  function reconcile(was) {
+    const w = written(was);
+    if (w) w.s.commit(w.next);
   }
 
   body.addEventListener("copy", (event) => copyOut(event, false));
@@ -995,6 +1146,10 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
   // --- keys ---
 
   root.addEventListener("keydown", (event) => {
+    // Mid-composition the keys are the input method's: Esc closes its list,
+    // Enter takes a word, the arrows and Tab choose one.
+    if (event.isComposing || event.keyCode === 229 || composing) return;
+    flush();
     const command = mac ? event.metaKey : event.ctrlKey;
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
     if (event.key === "Escape") {
@@ -1082,7 +1237,8 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
 
   function moveTo(key, where) {
     const s = surfaces.find((x) => x.key === key);
-    if (!s) return;
+    if (!s || composing) return;
+    flush();
     const before = focusKey;
     focusKey = key;
     if (s.base != null) {
@@ -1158,13 +1314,18 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
       listening.abort();
       return;
     }
-    if (!rendering && !composing && root.contains(document.activeElement)) readCaret();
+    if (!rendering && !composing && !pending && root.contains(document.activeElement)) readCaret();
   }, { signal: listening.signal });
 
   render(false);
   return {
     element: root,
-    value: () => source,
+    /** The note, with what a composition under way has written so far. */
+    value() {
+      flush();
+      const w = composing && written(composing);
+      return w ? w.s.whole(w.next).text : source;
+    },
     focus() {
       const s = surfaceFor(surfaces);
       focusKey = s.key;
@@ -1183,22 +1344,34 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
 
 // --- between the page and the shown text ---------------------------------------------
 
-/** The text [el] shows: its words, a box as the characters it stands for, a typed break as "\n". */
+/**
+ * The text [el] shows: its words, a box as the characters it stands for, a
+ * typed break as "\n". The <br> a box ends on is not a line, nor one Firefox
+ * puts at the end of its own (it can, writing a composition into an emptied box).
+ */
 function domText(el) {
   let out = "";
+  // How many of the last characters are breaks after the last words.
+  let tail = 0;
   const walk = (n) => {
     for (const c of n.childNodes) {
-      if (c.nodeType === Node.TEXT_NODE) out += c.data;
-      else if (c.dataset?.len) out += c.dataset.text ?? "";
-      else if (c.nodeName === "BR") out += c === el.lastChild ? "" : "\n";
-      else {
+      if (c.nodeType === Node.TEXT_NODE) {
+        out += c.data;
+        if (c.data) tail = 0;
+      } else if (c.dataset?.len) {
+        out += c.dataset.text ?? "";
+        tail = 0;
+      } else if (c.nodeName === "BR") {
+        out += "\n";
+        tail++;
+      } else {
         if ((c.nodeName === "DIV" || c.nodeName === "P") && out && !out.endsWith("\n")) out += "\n";
         walk(c);
       }
     }
   };
   walk(el);
-  return out;
+  return tail ? out.slice(0, -tail) : out;
 }
 
 function lengthOf(n) {
@@ -1272,6 +1445,7 @@ function domPoint(root, d) {
     }
   };
   visit(root);
-  // Past the words: before the closing <br>.
-  return found ?? { node: root, offset: Math.max(0, root.childNodes.length - 1) };
+  // Past the words: before the closing <br>, if the box still ends on one.
+  const n = root.childNodes.length;
+  return found ?? { node: root, offset: n && root.lastChild.nodeName === "BR" ? n - 1 : n };
 }
