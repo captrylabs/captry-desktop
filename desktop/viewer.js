@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=79";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=80";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=79";
-import * as lines from "./list-lines.js?v=79";
-import * as markup from "./note-markup.js?v=79";
-import { noteEditor } from "./note-editor.js?v=79";
-import * as store from "./store.js?v=79";
-import * as relay from "./relay.js?v=79";
-import * as pair from "./pair.js?v=79";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=79";
+} from "./library.js?v=80";
+import * as lines from "./list-lines.js?v=80";
+import * as markup from "./note-markup.js?v=80";
+import { noteEditor } from "./note-editor.js?v=80";
+import * as store from "./store.js?v=80";
+import * as relay from "./relay.js?v=80";
+import * as pair from "./pair.js?v=80";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=80";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -3624,9 +3624,23 @@ function shortcut(event) {
   }
 }
 
+/** Copies [text], a string or { plain, html }; the html where the browser can, the plain words otherwise. */
 async function copyNow(text, done) {
   try {
-    await navigator.clipboard.writeText(text);
+    if (typeof text === "string") {
+      await navigator.clipboard.writeText(text);
+    } else {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([text.plain], { type: "text/plain" }),
+            "text/html": new Blob([text.html], { type: "text/html" }),
+          }),
+        ]);
+      } catch (e) {
+        await navigator.clipboard.writeText(text.plain);
+      }
+    }
     toast(done);
   } catch (e) {
     toast("Could not copy.");
@@ -4623,7 +4637,8 @@ function renderDetail(c) {
   if (c.collections.some((m) => m.list)) {
     d.append(listPanel(c));
   } else if (c.note) {
-    const s = section("Your note", c.note);
+    // Copied as it is shown, not with its asterisks and pipes.
+    const s = section("Your note", c.note, () => noteCopy(c.note));
     s.classList.add("note-section");
     s.lastChild.replaceChildren(noteBody(c, words));
     if (editable(c)) {
@@ -4984,6 +4999,125 @@ function styleRuns(styles) {
   return runs;
 }
 
+/**
+ * A note to copy, its markup drawn rather than written: { plain, html }.
+ * plain is line by line with bullets as "• ", boxes as "☐ " or "☑ ", a
+ * table's cells joined by tabs and a sum as its result; html has the same
+ * in bold, italic, strike, headings, lists and a table, for pasting into a
+ * document or an email.
+ */
+function noteCopy(note) {
+  const escape = (s) => s.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+  // The shown characters of [source] after its first [marker] stored ones:
+  // the editor's zero-width spaces dropped, a box's em space too, any other
+  // em space a space; and the same as html, with its bold, italic and strike.
+  const shown = (source, marker = 0, headingBold = false) => {
+    const { display, spans, originalToDisplay } = markup.layout(source);
+    const from = originalToDisplay[marker];
+    const text = (i) => {
+      const ch = display[i];
+      if (ch === "\u200b") return "";
+      if (ch === "\u2003") return i >= 2 && display[i - 1] === " " && /[☐☑]/.test(display[i - 2]) ? "" : " ";
+      return ch;
+    };
+    const cuts = new Set([from, display.length]);
+    for (const s of spans) for (const at of [s.start, s.end]) if (at > from && at < display.length) cuts.add(at);
+    const points = [...cuts].sort((a, b) => a - b);
+    let plain = "";
+    let html = "";
+    for (let k = 0; k < points.length - 1; k++) {
+      let piece = "";
+      for (let i = points[k]; i < points[k + 1]; i++) piece += text(i);
+      if (!piece) continue;
+      plain += piece;
+      const on = spans.filter((s) => s.start <= points[k] && points[k + 1] <= s.end);
+      let out = escape(piece);
+      if (on.some((s) => s.strike)) out = `<s>${out}</s>`;
+      if (on.some((s) => s.italic)) out = `<em>${out}</em>`;
+      if (on.some((s) => s.bold || (headingBold && s.heading))) out = `<strong>${out}</strong>`;
+      html += out;
+    }
+    return { plain, html };
+  };
+  const plainLines = [];
+  const html = [];
+  // The list or paragraph being written: { kind, start, items }.
+  let open = null;
+  const close = () => {
+    if (!open) return;
+    const items = open.items.map((item) => `<li>${item}</li>`).join("");
+    if (open.kind === "bullet") html.push(`<ul>${items}</ul>`);
+    else if (open.kind === "ordered") html.push(`<ol start="${open.start}">${items}</ol>`);
+    else if (open.kind === "checklist") html.push(`<ul style="list-style:none;padding-left:0">${items}</ul>`);
+    else html.push(`<p>${open.items.join("<br>")}</p>`);
+    open = null;
+  };
+  const add = (kind, item, start) => {
+    if (open?.kind !== kind) {
+      close();
+      open = { kind, start, items: [] };
+    }
+    open.items.push(item);
+  };
+  const cell = "border:1px solid #bbb;padding:4px 8px";
+  const blocks = markup.parseBlocks(note);
+  blocks.forEach((block, b) => {
+    if (block.type === "table") {
+      close();
+      const cols = Math.max(1, ...block.rows.map((row) => row.length));
+      const results = markup.TableMath.evaluate(block.rows.map((row) => row.map((c) => c.text)));
+      const rows = block.rows.map((row, r) => {
+        const cells = [];
+        for (let col = 0; col < cols; col++) {
+          const text = row[col]?.text ?? "";
+          const result = results[r]?.[col] ?? null;
+          if (result != null) {
+            cells.push({ plain: String(result), html: `<strong>${escape(String(result))}</strong>`, right: true });
+          } else {
+            const s = shown(text, 0, true);
+            const total = text.trim().toLowerCase() === "total";
+            cells.push({ plain: s.plain, html: total ? `<strong>${s.html}</strong>` : s.html, right: markup.TableMath.isNumber(text) });
+          }
+        }
+        plainLines.push(cells.map((c) => c.plain).join("\t"));
+        return `<tr>${cells.map((c) => `<td style="${cell}${c.right ? ";text-align:right" : ""}">${c.html}</td>`).join("")}</tr>`;
+      });
+      html.push(`<table style="border-collapse:collapse"><tbody>${rows.join("")}</tbody></table>`);
+      return;
+    }
+    // Lines before a table end in the break the table starts on.
+    let text = note.slice(block.start, block.end);
+    if (b < blocks.length - 1 && text.endsWith("\n")) text = text.slice(0, -1);
+    for (const line of text.split("\n")) {
+      const prefix = markup.parsePrefix(line);
+      const s = shown(line, prefix.markerLength);
+      if (prefix.kind === "heading") {
+        close();
+        plainLines.push(s.plain);
+        html.push(`<h${prefix.level}>${s.html}</h${prefix.level}>`);
+      } else if (prefix.kind === "bullet") {
+        plainLines.push(`• ${s.plain}`);
+        add("bullet", s.html);
+      } else if (prefix.kind === "ordered") {
+        plainLines.push(`${prefix.n}. ${s.plain}`);
+        add("ordered", s.html, prefix.n);
+      } else if (prefix.kind === "checklist") {
+        const box = prefix.checked ? "☑" : "☐";
+        plainLines.push(`${box} ${s.plain}`);
+        add("checklist", `${box} ${s.html}`);
+      } else if (!line.trim()) {
+        close();
+        plainLines.push("");
+      } else {
+        plainLines.push(s.plain);
+        add("p", s.html);
+      }
+    }
+  });
+  close();
+  return { plain: plainLines.join("\n"), html: html.join("") };
+}
+
 /** Where the open capture's words are marked, so a changed search can mark them again. */
 const MARKED = "h2, .prose, blockquote, .link-title, .link-url, .entity-value, .list-text";
 
@@ -5237,7 +5371,8 @@ function noteTable(block, words) {
   return wrap;
 }
 
-function section(heading, body) {
+/** A titled section of [body], its Copy button copying [copied]() when given, [body] otherwise. */
+function section(heading, body, copied = () => body) {
   const s = document.createElement("section");
   const h = document.createElement("h3");
   h.append(heading);
@@ -5247,7 +5382,7 @@ function section(heading, body) {
     copy.className = "copy-section";
     copy.append(icon("copy"), "Copy");
     copy.setAttribute("aria-label", `Copy ${heading.toLowerCase()}`);
-    copy.addEventListener("click", () => copyNow(body, `Copied ${heading.toLowerCase()}`));
+    copy.addEventListener("click", () => copyNow(copied(), `Copied ${heading.toLowerCase()}`));
     h.append(copy);
   }
   const div = document.createElement("div");
