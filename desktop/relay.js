@@ -47,21 +47,104 @@ export async function overLimit(response) {
   }
 }
 
+// A request that never ends would hold whatever waits on it for the life of
+// the tab: a look at the feed, above all, which no later look can start
+// past. So the relay has a time to answer in and a time any one pause in a
+// body may last, not a time for the whole of it, which on a slow line is
+// minutes for a picture and is fine while bytes keep coming.
+
+/**
+ * How long the relay has to answer once a request is sent: half a minute.
+ * It answers from its own storage in well under a second; this is room for
+ * a slow or busy line, and is the longest a hung look holds the next one back.
+ */
+export const RELAY_ANSWER_MS = 30_000;
+
+/** How long a body may go without a byte arriving before it counts as stalled. As long, for the same reasons. */
+export const RELAY_STALL_MS = 30_000;
+
+/**
+ * The slowest upload a request body is allowed for: 32 KiB a second, 256
+ * kbit/s, the far end of a weak mobile connection. fetch cannot say how much
+ * of a body has gone, so a body's time to answer starts only once it could
+ * have gone at that rate: a 20 MiB picture gets about 11 minutes.
+ */
+export const RELAY_SLOW_UPLOAD = 32 * 1024;
+
+/** The time the relay has to answer a request carrying [bytes] of body. */
+export function relayAnswerMs(bytes = 0) {
+  return RELAY_ANSWER_MS + Math.ceil(bytes / RELAY_SLOW_UPLOAD) * 1000;
+}
+
+/**
+ * [url] fetched with [init], and its whole body: { response, bytes }. Throws
+ * when there is no answer within [answerMs] or the body stops for [stallMs],
+ * and the request is dropped. [request] is fetch, or a stand-in for tests.
+ */
+export async function fetchWithin(url, init, { answerMs, stallMs }, request = (...args) => fetch(...args)) {
+  const controller = new AbortController();
+  // Each wait is raced against its own timer, so a stalled stream ends it
+  // whether or not the stream itself notices the abort.
+  const within = (promise, ms) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error("timed out"));
+    }, ms);
+    promise.then((v) => {
+      clearTimeout(timer);
+      resolve(v);
+    }, (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+  const response = await within(request(url, { ...init, signal: controller.signal }), answerMs);
+  if (!response.body) return { response, bytes: new Uint8Array(await within(response.arrayBuffer(), stallMs)) };
+  const reader = response.body.getReader();
+  const pieces = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await within(reader.read(), stallMs);
+      if (done) break;
+      pieces.push(value);
+      length += value.length;
+    }
+  } catch (e) {
+    reader.cancel().catch(() => {});
+    throw e;
+  }
+  const bytes = new Uint8Array(length);
+  let at = 0;
+  for (const piece of pieces) {
+    bytes.set(piece, at);
+    at += piece.length;
+  }
+  return { response, bytes };
+}
+
+/**
+ * One request to the mailbox: the body of the answer, or a RelayError. A
+ * request that timed out is "could not be reached", as one that never left;
+ * nothing here asks again, so a capture is never sent twice on its own.
+ */
 async function call(token, path, init = {}) {
   let response;
+  let bytes;
   try {
-    response = await fetch(base() + path, {
+    ({ response, bytes } = await fetchWithin(base() + path, {
       ...init,
       headers: { ...(init.headers ?? {}), authorization: `Bearer ${token}` },
       cache: "no-store",
       credentials: "omit",
       referrerPolicy: "no-referrer",
-    });
+    }, { answerMs: relayAnswerMs(init.body?.length ?? 0), stallMs: RELAY_STALL_MS }));
   } catch (e) {
     throw new RelayError("Captry's server could not be reached.", 0);
   }
   if (!response.ok) {
-    const reason = await overLimit(response)
+    const limit = response.status === 429 ? await overLimit(new Response(bytes, { status: 429 })) : null;
+    const reason = limit
       ?? (response.status === 507
         ? "Too much is waiting for your phone. Open Captry on the phone first."
         : response.status === 413
@@ -71,17 +154,26 @@ async function call(token, path, init = {}) {
             : "Captry's server did not accept it.");
     throw new RelayError(reason, response.status);
   }
-  return response;
+  return bytes;
+}
+
+/** The relay's json answer in [bytes]; one that is not json is a server not accepting it. */
+function json(bytes) {
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (e) {
+    throw new RelayError("Captry's server did not accept it.", 0);
+  }
 }
 
 /** Sends one sealed capture. Returns the relay's id for it. */
 export async function send(token, sealed) {
-  const response = await call(token, "/items", {
+  const bytes = await call(token, "/items", {
     method: "POST",
     headers: { "content-type": "application/octet-stream" },
     body: sealed,
   });
-  return (await response.json()).id;
+  return json(bytes).id;
 }
 
 /** How many entries the relay puts in one page of the feed (FEED_PAGE in worker/feedback/src/relay.js). */
@@ -103,15 +195,22 @@ export function moreFeedPages(entries, before, after, pages) {
   return entries >= FEED_PAGE && after > before && pages < FEED_PAGES_PER_LOOK;
 }
 
+/**
+ * Whether a look that read [pages] pages stopped at the cap with more to
+ * read: its last page full and moving the place on, [before] to [after].
+ * Such a look did not reach the end, so it may not say "Up to date".
+ */
+export function feedPagesCapped(entries, before, after, pages) {
+  return entries >= FEED_PAGE && after > before && pages >= FEED_PAGES_PER_LOOK;
+}
+
 /** Feed entries after `after`: { entries: [{seq, createdAt, size}], latest, trimmedThrough }. */
 export async function feedSince(token, after) {
-  const response = await call(token, `/feed?after=${after}`);
-  return response.json();
+  return json(await call(token, `/feed?after=${after}`));
 }
 
 export async function feedEntry(token, seq) {
-  const response = await call(token, `/feed/${seq}`);
-  return new Uint8Array(await response.arrayBuffer());
+  return call(token, `/feed/${seq}`);
 }
 
 /**
@@ -288,6 +387,5 @@ export async function pairDone(code, pageToken) {
 
 /** The ids still waiting for the phone. */
 export async function waiting(token) {
-  const response = await call(token, "/items");
-  return new Set((await response.json()).items.map((i) => i.id));
+  return new Set(json(await call(token, "/items")).items.map((i) => i.id));
 }

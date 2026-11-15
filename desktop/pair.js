@@ -139,3 +139,26 @@ export function browserLabel() {
   const os = /Windows/.test(ua) ? "Windows" : /Mac OS X/.test(ua) ? "a Mac" : /CrOS/.test(ua) ? "a Chromebook" : /Linux/.test(ua) ? "Linux" : "a computer";
   return `${browser} on ${os}`;
 }
+
+/**
+ * The longest phone name kept: 40 characters, as the phone keeps a
+ * computer's (MAX_LABEL in DesktopPairing.kt). A name people give a phone,
+ * or its model, fits; the relay passes the name on and could send any length.
+ */
+export const PHONE_NAME_MAX = 40;
+
+/**
+ * The phone's name as the relay passed it on, as it may be shown: text only,
+ * control and formatting characters and line breaks made spaces, spaces run
+ * together, and no longer than PHONE_NAME_MAX. "" for anything that is not
+ * text, so the page says "your phone" as it does when there is no name.
+ * cleanLabel in DesktopPairing.kt does the same to the computer's.
+ */
+export function phoneName(raw) {
+  if (typeof raw !== "string") return "";
+  const flat = raw.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ").replace(/[ \t\n\v\f\r]+/g, " ").trim();
+  if (flat.length <= PHONE_NAME_MAX) return flat;
+  // Not through the middle of a character made of two.
+  const end = /[\uD800-\uDBFF]/.test(flat[PHONE_NAME_MAX - 2]) ? PHONE_NAME_MAX - 2 : PHONE_NAME_MAX - 1;
+  return flat.slice(0, end).trimEnd() + "…";
+}

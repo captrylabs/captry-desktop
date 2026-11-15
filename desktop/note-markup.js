@@ -660,9 +660,20 @@ export function replaceTable(text, table, rows, caretRow, caretCol, selectionSta
   return edit(next, start, end);
 }
 
+/**
+ * The most cells in any of [rows], 0 for none. Counted in a loop: spreading
+ * a long table's rows into Math.max passes the engine's limit on arguments
+ * (about 125,000 rows in V8), and the note could then not be opened.
+ */
+export function widestRow(rows) {
+  let widest = 0;
+  for (const row of rows) if (row.length > widest) widest = row.length;
+  return widest;
+}
+
 export function addTableRow(text, table, afterRow, caretCol = 0) {
   const rows = table.rows.map((row) => row.map((cell) => cell.text));
-  const cols = Math.max(Math.max(...rows.map((r) => r.length)), TABLE_COLUMNS);
+  const cols = Math.max(widestRow(rows), TABLE_COLUMNS);
   const at = coerceIn(afterRow + 1, 0, rows.length);
   rows.splice(at, 0, new Array(cols).fill(""));
   const col = coerceIn(caretCol, 0, cols - 1);
@@ -670,7 +681,7 @@ export function addTableRow(text, table, afterRow, caretCol = 0) {
 }
 
 export function addTableColumn(text, table, afterCol, caretRow = 0) {
-  const cols = Math.max(Math.max(...table.rows.map((r) => r.length)), 1);
+  const cols = Math.max(widestRow(table.rows), 1);
   const at = coerceIn(afterCol + 1, 0, cols);
   const rows = table.rows.map((row) => {
     const cells = Array.from({ length: cols }, (_, i) => row[i]?.text ?? "");
@@ -695,7 +706,7 @@ export function deleteTableRow(text, table, row, caretCol = 0) {
 /** Deleting the last column deletes the table. */
 export function deleteTableColumn(text, table, col, caretRow = 0) {
   const rows = tableTexts(table);
-  const cols = Math.max(...rows.map((r) => r.length));
+  const cols = widestRow(rows);
   if (cols <= 1) return dropTable(text, table);
   const at = coerceIn(col, 0, cols - 1);
   const next = rows.map((row) => row.filter((_, i) => i !== at));
@@ -788,7 +799,7 @@ function keepCaret(text, table, rows, row, col) {
 }
 
 function tableTexts(table) {
-  const cols = Math.max(Math.max(...table.rows.map((r) => r.length)), 1);
+  const cols = Math.max(widestRow(table.rows), 1);
   return table.rows.map((row) => Array.from({ length: cols }, (_, i) => row[i]?.text ?? ""));
 }
 
@@ -904,7 +915,7 @@ function rowsEnd(text, table) {
 }
 
 function normalizeTable(rows) {
-  const cols = rows.length ? Math.max(Math.max(...rows.map((r) => r.length)), 1) : TABLE_COLUMNS;
+  const cols = rows.length ? Math.max(widestRow(rows), 1) : TABLE_COLUMNS;
   const cleaned = rows.map((row) =>
     Array.from({ length: cols }, (_, i) => (i < row.length ? row[i] : "").replaceAll("|", " ").replaceAll("\n", " ")));
   return cleaned.length ? cleaned : [new Array(cols).fill("")];
@@ -983,10 +994,20 @@ function num(value, rest = {}) {
 
 const hasUnit = (n) => n.prefix.length > 0 || n.suffix.length > 0;
 
+// A cell not worked out yet, and a formula that failed, in Sheet.known.
+const UNKNOWN = Symbol("unknown");
+const FAILED = Symbol("failed");
+
 class Sheet {
   constructor(rows) {
     this.rows = rows;
-    this.results = new Map();
+    // Every range is clipped to the widest row: counted once, not per range.
+    this.width = widestRow(rows);
+    // Each cell worked out once and kept: a formula's result (FAILED for an
+    // error), a number as read, or null for words. A sum over a column reads
+    // every cell above it, so a table of sums would otherwise read the same
+    // words again for every sum.
+    this.known = rows.map((row) => new Array(row.length).fill(UNKNOWN));
     this.visiting = new Set();
     // The formula being worked out at the top, left out of its own ranges.
     this.self = [-1, -1];
@@ -1002,12 +1023,10 @@ class Sheet {
   }
 
   formula(r, c) {
+    const known = this.known[r][c];
+    if (known === FAILED) throw new FormulaError();
+    if (known !== UNKNOWN) return known;
     const key = `${r},${c}`;
-    if (this.results.has(key)) {
-      const known = this.results.get(key);
-      if (known == null) throw new FormulaError();
-      return known;
-    }
     if (this.visiting.has(key)) throw new FormulaError();
     this.visiting.add(key);
     let result = null;
@@ -1018,7 +1037,7 @@ class Sheet {
       result = null;
     }
     this.visiting.delete(key);
-    this.results.set(key, result);
+    this.known[r][c] = result ?? FAILED;
     if (result == null) throw new FormulaError();
     return result;
   }
@@ -1028,7 +1047,15 @@ class Sheet {
     const row = r >= 0 && r < this.rows.length ? this.rows[r] : null;
     const text = row && c >= 0 && c < row.length ? row[c] : null;
     if (text == null) return null;
-    return isFormula(text) ? this.formula(r, c) : parseNumber(text);
+    const known = this.known[r][c];
+    if (known === UNKNOWN) {
+      if (isFormula(text)) return this.formula(r, c);
+      const n = parseNumber(text);
+      this.known[r][c] = n;
+      return n;
+    }
+    if (known === FAILED) throw new FormulaError();
+    return known;
   }
 
   /** One referenced cell. Empty counts as zero, words are an error. */
@@ -1045,7 +1072,7 @@ class Sheet {
   /** The numbers in a range. Words and empty cells are skipped, as a spreadsheet does. */
   range(r1, c1, r2, c2) {
     const out = [];
-    const width = this.rows.length ? Math.max(...this.rows.map((row) => row.length)) : 0;
+    const width = this.width;
     const rowFrom = Math.max(Math.min(r1, r2), 0);
     const rowTo = Math.min(Math.max(r1, r2), this.rows.length - 1);
     const colFrom = Math.max(Math.min(c1, c2), 0);
@@ -1161,16 +1188,21 @@ class Parser {
   }
 
   call(name) {
+    // Added in a loop, not spread: a range over a long column passes the
+    // engine's limit on arguments, and the sum would read as an error.
     const values = [];
+    const add = (more) => {
+      for (const n of more) values.push(n);
+    };
     if (this.peek() === "(") {
       this.i++;
       this.skipSpace();
       if (this.peek() === ")") {
         this.i++;
-        values.push(...this.above());
+        add(this.above());
       } else {
         for (;;) {
-          values.push(...this.argument());
+          add(this.argument());
           this.skipSpace();
           const ch = this.peek();
           if (ch === "," || ch === ";") this.i++;
@@ -1181,7 +1213,7 @@ class Parser {
         }
       }
     } else {
-      values.push(...this.above());
+      add(this.above());
     }
     return aggregate(name, values);
   }

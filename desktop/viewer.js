@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=82";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=83";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=82";
-import * as lines from "./list-lines.js?v=82";
-import * as markup from "./note-markup.js?v=82";
-import { noteEditor } from "./note-editor.js?v=82";
-import * as store from "./store.js?v=82";
-import * as relay from "./relay.js?v=82";
-import * as pair from "./pair.js?v=82";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=82";
+} from "./library.js?v=83";
+import * as lines from "./list-lines.js?v=83";
+import * as markup from "./note-markup.js?v=83";
+import { noteEditor } from "./note-editor.js?v=83";
+import * as store from "./store.js?v=83";
+import * as relay from "./relay.js?v=83";
+import * as pair from "./pair.js?v=83";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=83";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -439,7 +439,8 @@ async function startPairing() {
       const body = await openFeed(key, await relay.pairSnapshotPart(code, i, stopped));
       if (!body) throw new relay.RelayError("Part of your library could not be opened. Pair again.", 0);
       // A part out of place, missing or from another library: not what the phone sent.
-      if (!snapshotPartFits(body, i, status.total, parts)) throw new relay.RelayError("Part of your library did not arrive. Pair again.", 0);
+      // Sent for this pairing: the proof is this pairing's alone.
+      if (!snapshotPartFits(body, i, status.total, parts, secret.proof)) throw new relay.RelayError("Part of your library did not arrive. Pair again.", 0);
       for (const change of body.changes) {
         if (change.op === "snapshot") {
           at = change.at ?? at;
@@ -453,7 +454,6 @@ async function startPairing() {
             const bytes = fromBase64(f.data);
             feedFiles.set(f.file, new Blob([bytes], { type: "image/jpeg" }));
             if (f.thumb) thumbOnly.add(f.file);
-            if (!session.ephemeral) sealCache(key, bytes).then((sealed) => store.saveImage(f.file, sealed));
           }
         }
       }
@@ -480,10 +480,20 @@ async function startPairing() {
       ephemeral: session.ephemeral,
     };
     // Entries the library already holds are not applied again.
-    feed = { seq: 0, since: at, n: parts.n ?? null, applied: 0, missing: false };
+    feed = { seq: 0, since: at, n: parts.n ?? null, applied: 0, missing: false, short: true };
     // Not remembered: nothing about this pairing is written to the browser,
     // so closing the tab is the end of it on this computer.
     if (!session.ephemeral) await store.remember(place, key, relayToken);
+    // Its pictures are kept only now the pairing is: one that failed or was
+    // cancelled leaves none behind to push real ones out of the cache.
+    const target = opened;
+    if (await keptHere(target)) {
+      for (const [name, blob] of files) {
+        blob.arrayBuffer()
+          .then((b) => sealCache(key, new Uint8Array(b)))
+          .then((sealed) => opened === target && store.saveImage(name, sealed));
+      }
+    }
     pairing = null;
     pairEl.panel.hidden = true;
     pairEl.start.hidden = false;
@@ -537,7 +547,7 @@ async function offerRemembered({ auto = true } = {}) {
     return;
   }
   el.again.hidden = false;
-  el.againName.textContent = saved.name ?? "your phone";
+  el.againName.textContent = friendlyPhone(saved.name) || "your phone";
   sentItems = await loadSent(saved.key);
   el.againOpen.onclick = () => openRemembered(saved);
   if (auto) await openRemembered(saved);
@@ -643,7 +653,7 @@ function closeOpened() {
   liveConnection?.stop();
   liveConnection = null;
   liveUp = false;
-  feed = { seq: 0, since: 0, n: null, applied: 0, missing: false };
+  feed = { seq: 0, since: 0, n: null, applied: 0, missing: false, short: true };
   feedFiles.clear();
   for (const url of fileUrls.values()) URL.revokeObjectURL(url);
   fileUrls.clear();
@@ -785,6 +795,20 @@ async function tokenHash(relayToken) {
 /** Whether what this computer keeps ([saved]) is the pairing with [relayToken]. */
 function storedIsThis(saved, relayToken) {
   return !!saved && (saved.relayToken ?? null) === relayToken;
+}
+
+/**
+ * Whether [target], the library open here, may write to what this computer
+ * keeps: remembered, and still the pairing kept. A tab left open on another
+ * pairing would otherwise write its library, draft or sent captures over the
+ * one kept now. Once it is not, it never is again for this library, and the
+ * tab goes on as it is, writing nothing.
+ */
+async function keptHere(target) {
+  if (!target || target.ephemeral || target.notKept) return false;
+  if (storedIsThis(await store.recall(), target.relayToken ?? null)) return true;
+  target.notKept = true;
+  return false;
 }
 
 async function sha256Hex(bytes) {
@@ -1121,11 +1145,12 @@ function keepDraft() {
 }
 
 async function saveDraft() {
-  const key = opened?.key;
-  if (!key || opened.ephemeral) return;
+  const target = opened;
+  const key = target?.key;
+  if (!key || target.ephemeral) return;
   el.newCapture.classList.toggle("has-draft", composeHasContent() && !el.compose.open);
   if (!composeHasContent()) {
-    await store.saveDraft(null);
+    if (await keptHere(target)) await store.saveDraft(null);
     return;
   }
   const draft = {
@@ -1141,7 +1166,7 @@ async function saveDraft() {
   };
   const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(draft)));
   // Unlinked meanwhile: nothing goes back into the storage just cleared.
-  if (opened?.key !== key) return;
+  if (opened?.key !== key || !(await keptHere(target))) return;
   await store.saveDraft(sealed);
 }
 
@@ -1149,8 +1174,8 @@ async function saveDraft() {
  * Clears the kept draft after Discard or Send. A pairing not remembered never
  * kept one, and the draft there belongs to the pairing that is.
  */
-function dropDraft() {
-  if (opened && !opened.ephemeral) store.saveDraft(null);
+async function dropDraft() {
+  if (await keptHere(opened)) store.saveDraft(null);
 }
 
 /** Puts a kept draft back into New capture, without opening it. */
@@ -1176,7 +1201,7 @@ async function restoreDraft() {
     el.composePinWhere.value = d.pinWhere ?? "";
     el.newCapture.classList.toggle("has-draft", composeHasContent());
   } catch (e) {
-    await store.saveDraft(null);
+    if (await keptHere(opened)) await store.saveDraft(null);
   }
 }
 
@@ -1330,7 +1355,7 @@ async function settleSent() {
   if (!arrived.length) return;
   const ids = arrived.map((i) => i.id);
   sentItems = sentItems.filter((i) => !ids.includes(i.id));
-  await store.removeSent(ids);
+  if (await keptHere(opened)) await store.removeSent(ids);
 }
 
 /**
@@ -1383,8 +1408,11 @@ document.addEventListener("visibilitychange", () => {
  * after that, only new ones, every half minute while the page is in view.
  * An upsert replaces or adds a capture, with any new pictures; a delete
  * removes one.
+ *
+ * `short` is true until a look reaches the last entry, and only then may the
+ * page say "Up to date": a library just opened has not looked yet.
  */
-let feed = { seq: 0, since: 0, n: null, applied: 0, missing: false };
+let feed = { seq: 0, since: 0, n: null, applied: 0, missing: false, short: true };
 const feedFiles = new Map(); // picture name -> Blob, as the phone sent it
 const FEED_MS = 30_000;
 let feedRunning = false;
@@ -1401,8 +1429,13 @@ async function syncFeed() {
   feedRunning = true;
   const target = opened;
   // Whether the look stopped before the last entry; only one that gets there
-  // may say "Up to date".
+  // may say "Up to date". Short until then: the pill is not drawn again for
+  // it, so a quick look does not flicker, but one that hangs reads as
+  // "Connecting" at the next redraw, not "Up to date".
   let short = true;
+  feed.short = true;
+  // Whether this look went back to read the feed again (feedPlaceBack).
+  let wentBack = false;
   try {
     let changed = 0;
     let counted = false;
@@ -1410,6 +1443,17 @@ async function syncFeed() {
       const before = feed.seq;
       const page = await relay.feedSince(target.relayToken, feed.seq);
       if (opened !== target) return;
+      // The place is past the relay's last entry, which no honest answer
+      // leads to: read what it holds again, from where it says it starts.
+      // Once a look, so a relay that does it again cannot keep a look going;
+      // such a look is not at the end, whatever it reads after.
+      const back = feedPlaceBack(feed.seq, page.latest, page.trimmedThrough);
+      if (back !== null) {
+        if (wentBack) break;
+        wentBack = true;
+        feed.seq = back;
+        continue;
+      }
       // Entries were dropped for age or room after this library was made,
       // so something in between may be missing.
       if (feed.seq === 0 && page.trimmedThrough > 0 && page.entries[0] && page.entries[0].createdAt > feed.since) {
@@ -1466,14 +1510,16 @@ async function syncFeed() {
         feed.seq = seq;
       }
       if (!relay.moreFeedPages(page.entries.length, before, feed.seq, pages)) {
-        short = false;
+        // Stopped at the cap with more to read, the next look carries on.
+        short = wentBack || relay.feedPagesCapped(page.entries.length, before, feed.seq, pages);
         break;
       }
     }
     feed.short = short;
     updateSync();
-    // The counter is kept with the library even when nothing shown changed.
-    if (counted && !changed) persistLibrary();
+    // The counter is kept with the library even when nothing shown changed,
+    // and so is a place that went back, or the next visit goes back again.
+    if ((counted || wentBack) && !changed) persistLibrary();
     if (changed) {
       persistLibrary();
       feed.applied += changed;
@@ -1612,12 +1658,13 @@ function applyChanges(changes) {
 // readable in the browser's storage either.
 
 async function saveSent(item) {
-  const key = opened?.key;
-  if (!key || opened.ephemeral) return;
+  const target = opened;
+  const key = target?.key;
+  if (!key || target.ephemeral) return;
   const image = item.image ? new Uint8Array(await item.image.arrayBuffer()) : null;
   const plain = { ...item, image: image ? toBase64(image) : null };
   const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(plain)));
-  if (opened?.key !== key) return;
+  if (opened?.key !== key || !(await keptHere(target))) return;
   await store.addSent({ id: item.id, sealed, savedAt: item.createdAt ?? Date.now() });
 }
 
@@ -1660,9 +1707,10 @@ function fromBase64(text) {
 
 setInterval(() => {
   // While the live connection is up the relay says when to look; this is
-  // only a safety net then.
+  // only a safety net then. A look that did not reach the end (stopped at
+  // the cap, cut off, or gone back) is carried on at this pace all the same.
   if (document.visibilityState !== "visible") return;
-  if (liveUp && Date.now() - lastFeedLook < 5 * 60_000) return;
+  if (liveUp && !feed.short && Date.now() - lastFeedLook < 5 * 60_000) return;
   syncFeed();
 }, FEED_MS);
 document.addEventListener("visibilitychange", () => {
@@ -2682,7 +2730,7 @@ function persistLibrary() {
       paused: !!target.paused,
     };
     const sealed = await sealCache(target.key, new TextEncoder().encode(JSON.stringify(payload)));
-    if (opened !== target) return;
+    if (opened !== target || !(await keptHere(target))) return;
     await store.saveLibrary({ name: target.name, placeKind: target.place.kind, sealed, savedAt: Date.now(), paused: !!target.paused });
   }, 1500);
 }
@@ -2704,7 +2752,7 @@ async function openFromCache(saved) {
   }
   if (payload?.v !== 1 || !Array.isArray(payload.captures)) return false;
   closeOpened();
-  const place = { kind: "paired", name: friendlyPhone(saved.name) };
+  const place = { kind: "paired", name: friendlyPhone(saved.name) || "your phone" };
   thumbOnly.clear();
   for (const name of payload.thumbs ?? []) thumbOnly.add(name);
   opened = {
@@ -2718,7 +2766,7 @@ async function openFromCache(saved) {
     paused: !!payload.paused,
   };
   const n = payload.feed?.n;
-  feed = { seq: feedSeqAfter(payload.feed?.seq, 0) ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false };
+  feed = { seq: feedSeqAfter(payload.feed?.seq, 0) ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false, short: true };
   sentItems = await loadSent(saved.key);
   await settleSent();
   showOpened(null);
@@ -4582,7 +4630,7 @@ function renderDetail(c) {
     letGo.addEventListener("click", async () => {
       const id = c.id.replace(/^sent:/, "");
       sentItems = sentItems.filter((i) => i.id !== id);
-      await store.removeSent([id]);
+      if (await keptHere(opened)) await store.removeSent([id]);
       mergeSent();
       renderNav();
       refresh();
@@ -5046,11 +5094,16 @@ function noteCopy(note) {
     open.items.push(item);
   };
   const cell = "border:1px solid #bbb;padding:4px 8px";
+  // A cell pasted into a spreadsheet as a formula would run there: one that
+  // starts as a formula does and is not a number (-5 is) gets an apostrophe,
+  // which a spreadsheet takes as "this is text" and does not show. Only in
+  // table cells, which go to spreadsheets; lines pasted into mail stay as written.
+  const asText = (plain) => (/^[=+\-@]/.test(plain) && !markup.TableMath.isNumber(plain) ? `'${plain}` : plain);
   const blocks = markup.parseBlocks(note);
   blocks.forEach((block, b) => {
     if (block.type === "table") {
       close();
-      const cols = Math.max(1, ...block.rows.map((row) => row.length));
+      const cols = Math.max(1, markup.widestRow(block.rows));
       const results = markup.TableMath.evaluate(block.rows.map((row) => row.map((c) => c.text)));
       const rows = block.rows.map((row, r) => {
         const cells = [];
@@ -5065,7 +5118,7 @@ function noteCopy(note) {
             cells.push({ plain: s.plain, html: total ? `<strong>${s.html}</strong>` : s.html, right: markup.TableMath.isNumber(text) });
           }
         }
-        plainLines.push(cells.map((c) => c.plain).join("\t"));
+        plainLines.push(cells.map((c) => asText(c.plain)).join("\t"));
         return `<tr>${cells.map((c) => `<td style="${cell}${c.right ? ";text-align:right" : ""}">${c.html}</td>`).join("")}</tr>`;
       });
       html.push(`<table style="border-collapse:collapse"><tbody>${rows.join("")}</tbody></table>`);
@@ -5313,7 +5366,7 @@ function noteTick(c, l, checked) {
  * showing its result in bold, and a "Total" label in bold.
  */
 function noteTable(block, words) {
-  const cols = Math.max(1, ...block.rows.map((row) => row.length));
+  const cols = Math.max(1, markup.widestRow(block.rows));
   const results = markup.TableMath.evaluate(block.rows.map((row) => row.map((cell) => cell.text)));
   // The labels are drawn by CSS, so a search does not mark them.
   const label = (text) => {
@@ -5465,9 +5518,13 @@ function say(message, kind) {
 }
 
 /** Small per-browser preferences. Never captures, never keys. */
-/** A phone's name as people say it: an emulator, or a bare model code, reads as one. */
+/**
+ * A phone's name as people say it: an emulator, or a bare model code, reads
+ * as one. "" when there is none, or none that is text (pair.phoneName), and
+ * the page then says "your phone". Only ever shown as text.
+ */
 function friendlyPhone(name) {
-  const n = (name ?? "").trim();
+  const n = pair.phoneName(name);
   if (/^(sdk_|generic)|emulator|_x86/i.test(n)) return "Android emulator";
   if (n.includes("_") && !/\s/.test(n)) return "Android phone";
   return n;

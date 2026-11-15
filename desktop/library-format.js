@@ -229,6 +229,28 @@ export function feedSeqAfter(seq, last) {
   return Number.isSafeInteger(seq) && seq > last ? seq : null;
 }
 
+/**
+ * Where to read the feed from again when the place kept, [seq], is past its
+ * end, or null when it is not. The relay hands out the numbers, and the
+ * place moves on its word, so a number it made up can set the place past
+ * every real one; the counter `n` sealed in each entry is what keeps an
+ * entry from being applied twice, so going back costs reads and nothing else.
+ *
+ * Past the end is past [latest], the highest number the relay still holds,
+ * when it holds any: numbers only go up, and the newest entry is dropped
+ * last, so a relay that holds entries never holds them all below a place it
+ * handed out. One that holds none (0) proves nothing: entries expire after
+ * two weeks, and an unknown mailbox answers the same, so the place stays and
+ * the next entry the phone writes says. Back to [trimmedThrough], the last
+ * number the relay no longer has (for a reader with a place: the one before a
+ * wiped feed's restart, if higher), so the whole of what it holds is read
+ * again; to 0 when that is not a number below [latest].
+ */
+export function feedPlaceBack(seq, latest, trimmedThrough) {
+  if (!Number.isSafeInteger(latest) || latest <= 0 || seq <= latest) return null;
+  return Number.isSafeInteger(trimmedThrough) && trimmedThrough >= 0 && trimmedThrough < latest ? trimmedThrough : 0;
+}
+
 /** The most parts a library comes in (MAX_PARTS in worker/feedback/src/pairing.js and DesktopPairing.kt). */
 export const SNAPSHOT_MAX_PARTS = 40;
 
@@ -255,14 +277,24 @@ export function snapshotStatus(raw) {
  * was made at, or null. Numbered parts are taken only all of them, each once,
  * in its place, from the same library. seen.snapshot says whether the first
  * part opened with the library's `snapshot` change, as every phone's does.
+ *
+ * Each part also names the pairing it was sent for, `pair`: the proof this
+ * pairing's phone answered with ([proof], from pair.js), which no other
+ * pairing shares. A relay that kept the parts of an earlier pairing cannot
+ * serve them at this one, as their `pair` is that pairing's. A phone from
+ * before this sends none, and its parts are taken, but only all of them
+ * without it: some with and some without is not one library.
  */
-export function snapshotPartFits(body, index, total, seen) {
+export function snapshotPartFits(body, index, total, seen, proof) {
   const numbered = body.parts !== undefined && body.parts !== null;
+  const paired = body.pair !== undefined && body.pair !== null;
+  if (paired && (typeof proof !== "string" || body.pair !== proof)) return false;
   if (index === 0) {
     seen.numbered = numbered;
+    seen.paired = paired;
     seen.n = null;
     seen.snapshot = body.changes.some((c) => c?.op === "snapshot");
-  } else if (numbered !== seen.numbered) {
+  } else if (numbered !== seen.numbered || paired !== seen.paired) {
     return false;
   }
   if (!numbered) return true;

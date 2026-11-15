@@ -12,7 +12,7 @@
 //
 // It is only DOM: the page hands it the note and is told when to save.
 
-import * as markup from "./note-markup.js?v=82";
+import * as markup from "./note-markup.js?v=83";
 
 const ZWSP = "\u200b";
 const BOX_LENGTH = 3;
@@ -533,7 +533,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
       blocks.forEach((b, i) => {
         if (b.type === "text") next.push(textSurface(`t:${i}`, b, i === blocks.length - 1, false));
         else {
-          const columns = Math.max(1, ...b.rows.map((r) => r.length));
+          const columns = Math.max(1, markup.widestRow(b.rows));
           b.rows.forEach((_, r) => {
             for (let c = 0; c < columns; c++) next.push(cellSurface(`c:${i}:${r}:${c}`, b, r, c, columns));
           });
@@ -544,7 +544,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
       const hadFocus = keepFocus || root.contains(document.activeElement);
       const target = surfaceFor(next);
       focusKey = target.key;
-      const nextShape = blocks.map((b) => (b.type === "text" ? "t" : `x${b.rows.length}:${Math.max(...b.rows.map((r) => r.length))}`)).join(",") +
+      const nextShape = blocks.map((b) => (b.type === "text" ? "t" : `x${b.rows.length}:${markup.widestRow(b.rows)}`)).join(",") +
         (next[next.length - 1].key === "after" ? "+" : "");
       if (nextShape === shape) {
         // Same boxes: fill them again where they are, so the one being typed in keeps focus.
@@ -582,7 +582,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
         body.append(editable(surfaces[i++]));
         return;
       }
-      const columns = Math.max(1, ...b.rows.map((r) => r.length));
+      const columns = Math.max(1, markup.widestRow(b.rows));
       // The table scrolls in its box; its bar sits under it, outside, so its menus are not cut off.
       const block = document.createElement("div");
       block.className = "ne-table";
@@ -645,6 +645,21 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
     return div;
   }
 
+  // Each table's sums, worked out once for the table as parsed in this redraw
+  // and shared by its cells: worked out for every sum cell, a table of sums
+  // took seconds to draw. A redraw parses the note afresh, so a changed table
+  // is a new key and the old results go with the old one.
+  const tableResults = new WeakMap();
+
+  function resultsOf(table) {
+    let results = tableResults.get(table);
+    if (!results) {
+      results = markup.TableMath.evaluate(table.rows.map((r) => r.map((c) => c.text)));
+      tableResults.set(table, results);
+    }
+    return results;
+  }
+
   /** Draws [s]'s words with their markup, or a sum's result while its cell is not being written in. */
   function fill(s) {
     const el = s.el;
@@ -652,7 +667,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
     el.classList.toggle("ne-empty", surfaces.length <= 1 && !s.local);
     if (placeholder) el.dataset.placeholder = placeholder;
     const results = s.kind === "cell" && markup.TableMath.isFormula(s.local) && focusKey !== s.key
-      ? markup.TableMath.evaluate(s.table.rows.map((r) => r.map((c) => c.text)))[s.row][s.col]
+      ? resultsOf(s.table)[s.row][s.col]
       : null;
     if (s.wrap) {
       s.wrap.className = results != null ? "num sum"
@@ -786,7 +801,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
       return holder;
     };
     const rows = (s) => s.table.rows.length;
-    const columns = (s) => Math.max(...s.table.rows.map((r) => r.length));
+    const columns = (s) => markup.widestRow(s.table.rows);
     const spacer = document.createElement("span");
     spacer.className = "ne-bar-space";
     bar.append(
@@ -1198,7 +1213,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
     const atEnd = start === s.local.length;
     let to = null;
     if (s.kind === "cell") {
-      const columns = Math.max(...s.table.rows.map((r) => r.length));
+      const columns = markup.widestRow(s.table.rows);
       if (event.key === "ArrowUp") to = cellKey(s, s.row - 1, s.col) ?? neighbour(s, -1);
       if (event.key === "ArrowDown") to = cellKey(s, s.row + 1, s.col) ?? neighbour(s, 1);
       if (event.key === "ArrowLeft" && atStart) to = s.col > 0 ? cellKey(s, s.row, s.col - 1) : cellKey(s, s.row - 1, columns - 1) ?? neighbour(s, -1);
@@ -1259,7 +1274,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
   }
 
   function nextCell(s, enter) {
-    const columns = Math.max(...s.table.rows.map((r) => r.length));
+    const columns = markup.widestRow(s.table.rows);
     const to = s.col < columns - 1 ? cellKey(s, s.row, s.col + 1) : cellKey(s, s.row + 1, 0);
     if (to) {
       moveTo(to, "end");
@@ -1271,7 +1286,7 @@ export function noteEditor(text, { icon, mac = false, placeholder = "", onSave, 
   }
 
   function previousCell(s) {
-    const columns = Math.max(...s.table.rows.map((r) => r.length));
+    const columns = markup.widestRow(s.table.rows);
     const to = s.col > 0 ? cellKey(s, s.row, s.col - 1) : cellKey(s, s.row - 1, columns - 1);
     if (to) moveTo(to, "end");
   }
