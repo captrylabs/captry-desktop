@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=78";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=79";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=78";
-import * as lines from "./list-lines.js?v=78";
-import * as markup from "./note-markup.js?v=78";
-import { noteEditor } from "./note-editor.js?v=78";
-import * as store from "./store.js?v=78";
-import * as relay from "./relay.js?v=78";
-import * as pair from "./pair.js?v=78";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=78";
+} from "./library.js?v=79";
+import * as lines from "./list-lines.js?v=79";
+import * as markup from "./note-markup.js?v=79";
+import { noteEditor } from "./note-editor.js?v=79";
+import * as store from "./store.js?v=79";
+import * as relay from "./relay.js?v=79";
+import * as pair from "./pair.js?v=79";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=79";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -3199,7 +3199,7 @@ function row(c, done) {
   if (s) {
     const snip = document.createElement("div");
     snip.className = "row-snippet";
-    snip.append(marked(s, words));
+    snip.append(s);
     text.append(snip);
   }
   b.append(text, rowFlags(c));
@@ -3224,7 +3224,7 @@ function card(c) {
     // Nothing to read: the kind, large and centred, instead of an empty box.
     words.className = "card-words" + (said ? "" : " bare");
     words.append(kindTile(c));
-    if (said) words.append(marked(said, searchWords(state.query)));
+    if (said) words.append(said);
     b.append(words);
   }
   const title = document.createElement("div");
@@ -4827,23 +4827,161 @@ function fileBlock(f, c) {
 
 // --- small helpers -----------------------------------------------------------
 
+/**
+ * A few words of [c] for its row or card, marked where [words] are in them,
+ * or null when there is nothing to show but the title.
+ */
 function snippet(c, max = 140, words = []) {
-  const fields = [c.note, c.summary, c.text, ...c.files.map((f) => f.textInImage), ...c.files.map((f) => f.transcript)]
-    .filter(Boolean)
-    .map((t) => t.replace(/\s+/g, " ").trim());
+  const s = snippetParts(c, max, words);
+  if (!s) return null;
+  if (!s.runs) return marked(s.text, words);
+  // A note's words drawn as the open note draws them, all at one size.
+  const frag = document.createDocumentFragment();
+  const hits = markRanges(s.text, words);
+  const cuts = new Set([0, s.text.length]);
+  for (const r of s.runs) cuts.add(r.start).add(r.end);
+  for (const [from, to] of hits) cuts.add(from).add(to);
+  const points = [...cuts].sort((a, b) => a - b);
+  for (let k = 0; k < points.length - 1; k++) {
+    const [from, to] = [points[k], points[k + 1]];
+    const text = s.text.slice(from, to);
+    let piece = document.createTextNode(text);
+    if (hits.some(([a, b]) => a <= from && to <= b)) {
+      const m = document.createElement("mark");
+      m.append(piece);
+      piece = m;
+    }
+    const run = s.runs.find((r) => r.start <= from && to <= r.end);
+    const classes = run ? [run.bold && "nm-b", run.italic && "nm-i", run.strike && "nm-s"].filter(Boolean) : [];
+    if (classes.length) {
+      const span = document.createElement("span");
+      span.className = classes.join(" ");
+      span.append(piece);
+      piece = span;
+    }
+    frag.append(piece);
+  }
+  return frag;
+}
+
+/**
+ * The snippet's words: { text, runs } with runs [{ start, end, bold, italic,
+ * strike }] over text when the words are the note's, null for any other
+ * field, or null for the whole when there is nothing to show.
+ */
+function snippetParts(c, max = 140, words = []) {
+  const plain = (t) => ({ text: t.replace(/\s+/g, " ").trim(), styles: null });
+  const fields = [
+    c.note && noteFlat(c.note),
+    ...[c.summary, c.text, ...c.files.map((f) => f.textInImage), ...c.files.map((f) => f.transcript)].filter(Boolean).map(plain),
+  ].filter(Boolean);
   // Searching: the part that has the words in it, not just the start.
-  const hit = words.length ? fields.find((t) => words.some((w) => t.toLowerCase().includes(w))) : null;
-  const body = hit ?? fields[0] ?? "";
-  if (!body || body === titleOf(c)) return "";
+  const hit = words.length ? fields.find((f) => words.some((w) => f.text.toLowerCase().includes(w))) : null;
+  const field = hit ?? fields[0];
+  const body = field?.text ?? "";
+  if (!body || body === titleOf(c)) return null;
+  // [from, to) of the body, with "…" before and after as asked.
+  const cut = (from, to, before, after) => {
+    const text = (before ? "…" : "") + body.slice(from, to) + (after ? "…" : "");
+    if (!field.styles) return { text, runs: null };
+    const styles = [...(before ? [0] : []), ...field.styles.slice(from, to), ...(after ? [0] : [])];
+    return { text, runs: styleRuns(styles) };
+  };
   if (hit) {
     const at = Math.min(...words.map((w) => body.toLowerCase().indexOf(w)).filter((i) => i >= 0));
     if (at > max / 2) {
       const from = body.lastIndexOf(" ", at - 30) + 1 || at - 30;
-      const part = body.slice(from);
-      return "…" + (part.length > max - 1 ? part.slice(0, max - 4) + "…" : part);
+      const long = body.length - from > max - 1;
+      return cut(from, long ? from + max - 4 : body.length, true, long);
     }
   }
-  return body.length > max ? body.slice(0, max - 3) + "…" : body;
+  return body.length > max ? cut(0, max - 3, false, true) : cut(0, body.length, false, false);
+}
+
+const SNIP_BOLD = 1;
+const SNIP_ITALIC = 2;
+const SNIP_STRIKE = 4;
+
+/**
+ * A note flat on one line, its markup drawn: { text, styles }, a style
+ * (SNIP_ bits) for each character of text. A heading is bold at the size of
+ * the rest; a table is its cells as shown, one after another.
+ */
+function noteFlat(note) {
+  // Every redraw of the list asks again, so the last few hundred are kept.
+  const cache = (noteFlat.cache ??= new Map());
+  const known = cache.get(note);
+  if (known) return known;
+  let raw = "";
+  const rawStyles = [];
+  const add = (source) => {
+    const { display, spans } = markup.layout(source);
+    const styles = new Array(display.length).fill(0);
+    for (const s of spans) {
+      const bits = (s.bold || s.heading ? SNIP_BOLD : 0) | (s.italic ? SNIP_ITALIC : 0) | (s.strike ? SNIP_STRIKE : 0);
+      for (let i = Math.max(0, s.start); i < Math.min(s.end, display.length); i++) styles[i] |= bits;
+    }
+    raw += display;
+    for (const s of styles) rawStyles.push(s);
+  };
+  const gap = (text) => {
+    raw += text;
+    for (const _ of text) rawStyles.push(0);
+  };
+  for (const block of markup.parseBlocks(note)) {
+    gap(" ");
+    if (block.type !== "table") {
+      add(note.slice(block.start, block.end));
+      continue;
+    }
+    // A sum shows its result, as it does in the open note.
+    const results = markup.TableMath.evaluate(block.rows.map((row) => row.map((cell) => cell.text)));
+    let first = true;
+    block.rows.forEach((row, r) =>
+      row.forEach((cell, col) => {
+        const result = results[r]?.[col] ?? null;
+        if (result == null && !cell.text.trim()) return;
+        if (!first) gap(" · ");
+        first = false;
+        if (result != null) gap(String(result));
+        else add(cell.text);
+      }),
+    );
+  }
+  // Without the editor's zero-width spaces, every run of space one space.
+  let text = "";
+  const styles = [];
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === "​") continue;
+    if (/\s/.test(ch)) {
+      if (text.endsWith(" ")) continue;
+      text += " ";
+    } else {
+      text += ch;
+    }
+    styles.push(rawStyles[i]);
+  }
+  const start = text.length - text.trimStart().length;
+  const end = text.trimEnd().length;
+  const flat = { text: text.slice(start, end), styles: styles.slice(start, end) };
+  if (cache.size >= 500) cache.delete(cache.keys().next().value);
+  cache.set(note, flat);
+  return flat;
+}
+
+/** [styles], one for each character, as runs of the same style that has any. */
+function styleRuns(styles) {
+  const runs = [];
+  for (let i = 0; i < styles.length; ) {
+    let j = i;
+    while (j < styles.length && styles[j] === styles[i]) j++;
+    if (styles[i]) {
+      runs.push({ start: i, end: j, bold: !!(styles[i] & SNIP_BOLD), italic: !!(styles[i] & SNIP_ITALIC), strike: !!(styles[i] & SNIP_STRIKE) });
+    }
+    i = j;
+  }
+  return runs;
 }
 
 /** Where the open capture's words are marked, so a changed search can mark them again. */
@@ -4872,15 +5010,8 @@ function marked(text, words) {
     frag.append(text ?? "");
     return frag;
   }
-  const lower = text.toLowerCase();
-  const spans = [];
-  for (const w of words) {
-    for (let i = lower.indexOf(w); i >= 0 && w; i = lower.indexOf(w, i + w.length)) spans.push([i, i + w.length]);
-  }
-  spans.sort((a, b) => a[0] - b[0]);
   let at = 0;
-  for (const [from, to] of spans) {
-    if (from < at) continue;
+  for (const [from, to] of markRanges(text, words)) {
     frag.append(text.slice(at, from));
     const m = document.createElement("mark");
     m.textContent = text.slice(from, to);
@@ -4889,6 +5020,25 @@ function marked(text, words) {
   }
   frag.append(text.slice(at));
   return frag;
+}
+
+/** Where [words] are in [text]: [from, to) pairs in order, none overlapping. */
+function markRanges(text, words) {
+  if (!words?.length || !text) return [];
+  const lower = text.toLowerCase();
+  const spans = [];
+  for (const w of words) {
+    for (let i = lower.indexOf(w); i >= 0 && w; i = lower.indexOf(w, i + w.length)) spans.push([i, i + w.length]);
+  }
+  spans.sort((a, b) => a[0] - b[0]);
+  const kept = [];
+  let at = 0;
+  for (const [from, to] of spans) {
+    if (from < at) continue;
+    kept.push([from, to]);
+    at = to;
+  }
+  return kept;
 }
 
 function bodyText(c) {
