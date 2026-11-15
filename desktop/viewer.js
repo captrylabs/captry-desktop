@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=80";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=81";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=80";
-import * as lines from "./list-lines.js?v=80";
-import * as markup from "./note-markup.js?v=80";
-import { noteEditor } from "./note-editor.js?v=80";
-import * as store from "./store.js?v=80";
-import * as relay from "./relay.js?v=80";
-import * as pair from "./pair.js?v=80";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=80";
+} from "./library.js?v=81";
+import * as lines from "./list-lines.js?v=81";
+import * as markup from "./note-markup.js?v=81";
+import { noteEditor } from "./note-editor.js?v=81";
+import * as store from "./store.js?v=81";
+import * as relay from "./relay.js?v=81";
+import * as pair from "./pair.js?v=81";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=81";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -2335,6 +2335,7 @@ function editBar(c) {
   return bar;
 }
 
+/** The title and note are edited in place; the bar under the toolbar only adds a collection. */
 function openEditor(c, field) {
   if (field === "title" || field === "note") {
     inlineEdit(c, field);
@@ -2345,32 +2346,22 @@ function openEditor(c, field) {
   editor.replaceChildren();
   editor.hidden = false;
   const form = document.createElement("form");
-  let input;
-  if (field === "note") {
-    input = document.createElement("textarea");
-    input.rows = 5;
-    input.value = c.note ?? "";
-  } else {
-    input = document.createElement("input");
-    input.type = "text";
-    input.value = field === "title" ? (c.title ?? "") : "";
-    if (field === "collection") {
-      input.placeholder = "Collection name";
-      const list = document.createElement("datalist");
-      list.id = "collection-names";
-      const names = new Set();
-      for (const other of opened.manifest.captures) for (const m of other.collections) names.add(m.name);
-      for (const name of [...names].sort()) list.append(option(name, name));
-      input.setAttribute("list", list.id);
-      form.append(list);
-    }
-  }
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Collection name";
+  const list = document.createElement("datalist");
+  list.id = "collection-names";
+  const names = new Set();
+  for (const other of opened.manifest.captures) for (const m of other.collections) names.add(m.name);
+  for (const name of [...names].sort()) list.append(option(name, name));
+  input.setAttribute("list", list.id);
+  form.append(list);
   input.className = "editor-input";
-  input.setAttribute("aria-label", field === "title" ? "Title" : field === "note" ? "Note" : "Collection");
+  input.setAttribute("aria-label", "Collection");
   const save = document.createElement("button");
   save.type = "submit";
   save.className = "button small primary";
-  save.textContent = field === "collection" ? "Add" : "Save";
+  save.textContent = "Add";
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "button small";
@@ -2389,18 +2380,13 @@ function openEditor(c, field) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = input.value.trim();
-    if (field === "title") {
-      if (value !== (c.title ?? "")) sendChange(c, [{ op: "title", from: c.title ?? null, to: value || null }]);
-    } else if (field === "note") {
-      if (value !== (c.note ?? "")) sendChange(c, [{ op: "note", from: c.note ?? null, to: value || null }]);
-    } else if (value && !c.collections.some((m) => m.name.toLowerCase() === value.toLowerCase())) {
+    if (value && !c.collections.some((m) => m.name.toLowerCase() === value.toLowerCase())) {
       sendChange(c, [{ op: "collection", name: value, add: true }]);
     }
     editor.hidden = true;
   });
   input.addEventListener("keydown", (event) => {
     if (event.key === "Escape") cancel.click();
-    if (field === "note" && event.key === "Enter" && (event.ctrlKey || event.metaKey)) form.requestSubmit();
   });
   editor.append(form);
   input.focus();
