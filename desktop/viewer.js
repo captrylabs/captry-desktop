@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=76";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=77";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=76";
-import * as lines from "./list-lines.js?v=76";
-import * as markup from "./note-markup.js?v=76";
-import { noteEditor } from "./note-editor.js?v=76";
-import * as store from "./store.js?v=76";
-import * as relay from "./relay.js?v=76";
-import * as pair from "./pair.js?v=76";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=76";
+} from "./library.js?v=77";
+import * as lines from "./list-lines.js?v=77";
+import * as markup from "./note-markup.js?v=77";
+import { noteEditor } from "./note-editor.js?v=77";
+import * as store from "./store.js?v=77";
+import * as relay from "./relay.js?v=77";
+import * as pair from "./pair.js?v=77";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=77";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
