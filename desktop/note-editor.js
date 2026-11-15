@@ -12,7 +12,7 @@
 //
 // It is only DOM: the page hands it the note and is told when to save.
 
-import * as markup from "./note-markup.js?v=77";
+import * as markup from "./note-markup.js?v=78";
 
 const ZWSP = "\u200b";
 const BOX_LENGTH = 3;
