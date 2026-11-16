@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=83";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=84";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=83";
-import * as lines from "./list-lines.js?v=83";
-import * as markup from "./note-markup.js?v=83";
-import { noteEditor } from "./note-editor.js?v=83";
-import * as store from "./store.js?v=83";
-import * as relay from "./relay.js?v=83";
-import * as pair from "./pair.js?v=83";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=83";
+} from "./library.js?v=84";
+import * as lines from "./list-lines.js?v=84";
+import * as markup from "./note-markup.js?v=84";
+import { noteEditor } from "./note-editor.js?v=84";
+import * as store from "./store.js?v=84";
+import * as relay from "./relay.js?v=84";
+import * as pair from "./pair.js?v=84";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=84";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -1429,11 +1429,10 @@ async function syncFeed() {
   feedRunning = true;
   const target = opened;
   // Whether the look stopped before the last entry; only one that gets there
-  // may say "Up to date". Short until then: the pill is not drawn again for
-  // it, so a quick look does not flicker, but one that hangs reads as
-  // "Connecting" at the next redraw, not "Up to date".
+  // may say "Up to date". feed.short is left as the last look left it until
+  // this one ends, so a routine look does not turn the pill to "Connecting";
+  // one that runs on past FEED_LOOK_FRESH_MS does (feedUpToDate).
   let short = true;
-  feed.short = true;
   // Whether this look went back to read the feed again (feedPlaceBack).
   let wentBack = false;
   try {
@@ -3726,7 +3725,7 @@ function updateSync() {
   } else if (waiting) {
     [state, short, full, detail] = ["saving", `${waiting} queued`, `${changes} queued`,
       "Your phone applies them the next time it checks in."];
-  } else if (liveUp && !feed.short) {
+  } else if (liveUp && relay.feedUpToDate(feed.short, feedRunning, lastFeedLook, now)) {
     [state, short, full] = ["ok", "Synced", "Up to date"];
     detail = lastPhoneAt ? `Last change ${ago(lastPhoneAt, now)}` : "Connected to your phone";
   } else {

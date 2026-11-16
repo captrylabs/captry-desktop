@@ -204,6 +204,26 @@ export function feedPagesCapped(entries, before, after, pages) {
   return entries >= FEED_PAGE && after > before && pages >= FEED_PAGES_PER_LOOK;
 }
 
+/**
+ * How long a look at the feed may run before the page stops saying "Up to
+ * date": two minutes. A look is a page of the list, answered within
+ * RELAY_ANSWER_MS, and the entries after it; the largest entry the relay
+ * takes, 21 MiB, comes in in under 90 s at 2 Mbit/s. A look still going past this is on a
+ * line slower than that or being fed a trickle, which RELAY_STALL_MS does not
+ * cut off, and what it brings may be anything.
+ */
+export const FEED_LOOK_FRESH_MS = 2 * 60_000;
+
+/**
+ * Whether the page may say "Up to date": the last look that ended reached
+ * the end ([short] false), and any look [running] since [startedAt] has not
+ * gone on past FEED_LOOK_FRESH_MS by [now]. A look under way does not count
+ * until it ends, so a routine one leaves the pill as it was.
+ */
+export function feedUpToDate(short, running, startedAt, now) {
+  return !short && (!running || now - startedAt < FEED_LOOK_FRESH_MS);
+}
+
 /** Feed entries after `after`: { entries: [{seq, createdAt, size}], latest, trimmedThrough }. */
 export async function feedSince(token, after) {
   return json(await call(token, `/feed?after=${after}`));
