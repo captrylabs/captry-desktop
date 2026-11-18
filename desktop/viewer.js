@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=84";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, snapshotSaysTook, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=85";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=84";
-import * as lines from "./list-lines.js?v=84";
-import * as markup from "./note-markup.js?v=84";
-import { noteEditor } from "./note-editor.js?v=84";
-import * as store from "./store.js?v=84";
-import * as relay from "./relay.js?v=84";
-import * as pair from "./pair.js?v=84";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=84";
+} from "./library.js?v=85";
+import * as lines from "./list-lines.js?v=85";
+import * as markup from "./note-markup.js?v=85";
+import { noteEditor } from "./note-editor.js?v=85";
+import * as store from "./store.js?v=85";
+import * as relay from "./relay.js?v=85";
+import * as pair from "./pair.js?v=85";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=85";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -238,6 +238,9 @@ let opened = null;
 
 /** Captures sent from this page that the library does not show yet. */
 let sentItems = [];
+
+/** Ids the phone said it took before a capture sent from here was kept (relay.keepUnmatched). */
+const tookUnmatched = new Set();
 
 /** What is being looked at. Everything the list shows is worked out from this. */
 const state = {
@@ -467,6 +470,10 @@ async function startPairing() {
     const files = new Map(feedFiles);
     const thumbs = new Set(thumbOnly);
     closeOpened();
+    // Captures sent before belong to the pairing they were sealed for; none
+    // is shown, looked for on the relay or kept again under this one until
+    // this pairing's own are read back below.
+    sentItems = [];
     for (const [name, blob] of files) feedFiles.set(name, blob);
     for (const name of thumbs) thumbOnly.add(name);
     const place = { kind: "paired", name: phoneLabel };
@@ -478,12 +485,20 @@ async function startPairing() {
       name: `Paired with ${phoneLabel}`,
       place,
       ephemeral: session.ephemeral,
+      // Said in the library itself, so a relay holding back the phone's word
+      // cannot keep a new pairing taking the relay's.
+      phoneSaysTook: snapshotSaysTook(parts),
     };
     // Entries the library already holds are not applied again.
     feed = { seq: 0, since: at, n: parts.n ?? null, applied: 0, missing: false, short: true };
     // Not remembered: nothing about this pairing is written to the browser,
     // so closing the tab is the end of it on this computer.
     if (!session.ephemeral) await store.remember(place, key, relayToken);
+    // Kept: those this key opens are still on their way (the same phone
+    // paired again); those it does not were another pairing's and are
+    // dropped, as on any load. Not kept: the remembered pairing's are left
+    // alone, as this tab writes none of its own.
+    if (!session.ephemeral) sentItems = await loadSent(key);
     // Its pictures are kept only now the pairing is: one that failed or was
     // cancelled leaves none behind to push real ones out of the cache.
     const target = opened;
@@ -650,6 +665,7 @@ function closeOpened() {
   el.sync.hidden = true;
   thumbOnly.clear();
   requestedFull.clear();
+  tookUnmatched.clear();
   liveConnection?.stop();
   liveConnection = null;
   liveUp = false;
@@ -706,7 +722,9 @@ const unlinkDialog = document.getElementById("unlink");
 el.close.addEventListener("click", () => {
   el.deviceMenu.hidePopover();
   document.getElementById("unlink-name").textContent = opened?.place?.name ?? "your phone";
-  const waiting = pendingEdits.size + trashPending.size + sentItems.filter((i) => i.relayId && !i.delivered).length;
+  // Those not confirmed count too: the phone may not have them, and Unlink
+  // forgets them here.
+  const waiting = pendingEdits.size + trashPending.size + sentItems.filter(relay.lostOnUnlink).length;
   const queued = document.getElementById("unlink-queued");
   queued.hidden = waiting === 0;
   queued.textContent = waiting === 1
@@ -1311,6 +1329,8 @@ el.compose.addEventListener("submit", async (event) => {
       ...choices,
     };
     sentItems.push(record);
+    // The phone's word may have come while the send was being answered.
+    if (relay.tookEarly(tookUnmatched, record)) record.delivered = true;
     await saveSent(record);
     resetCompose();
     el.compose.close();
@@ -1355,7 +1375,7 @@ async function settleSent() {
   if (!arrived.length) return;
   const ids = arrived.map((i) => i.id);
   sentItems = sentItems.filter((i) => !ids.includes(i.id));
-  if (await keptHere(opened)) await store.removeSent(ids);
+  await removeSent(ids);
 }
 
 /**
@@ -1369,26 +1389,55 @@ const DELIVERY_MS = 8_000;
 function watchDelivery(delay = DELIVERY_MS) {
   clearTimeout(deliveryTimer);
   const out = () => opened?.relayToken &&
-    (sentItems.some((i) => i.relayId && !i.delivered) || [...pendingEdits.values()].some((e) => !e.collected));
+    (sentItems.some(relay.sentOut) || [...pendingEdits.values()].some((e) => !e.collected));
   if (!out()) return;
   deliveryTimer = setTimeout(async () => {
     if (document.visibilityState === "visible" && out()) {
       try {
-        const still = await relay.waiting(opened.relayToken);
+        const target = opened;
+        const still = await relay.waiting(target.relayToken);
+        // Another pairing opened meanwhile: this mailbox says nothing of its captures.
+        if (opened !== target) throw new Error("closed");
         for (const edit of pendingEdits.values()) if (!edit.collected && !still.has(edit.relayId)) edit.collected = true;
-        const collected = sentItems.filter((i) => i.relayId && !i.delivered && !still.has(i.relayId));
-        if (collected.length) {
-          for (const item of collected) {
-            item.delivered = true;
-            await saveSent(item);
+        // Gone from the relay is on the phone only for a phone that has never
+        // said what it took; one that has is waited for (relay.afterDeliveryLook).
+        const now = Date.now();
+        const givesWord = !!opened.phoneSaysTook;
+        const collected = [];
+        let givenUp = 0;
+        let lookWanted = false;
+        for (const item of sentItems) {
+          const next = relay.afterDeliveryLook(item, still.has(item.relayId), givesWord, now, feed.endLookFrom ?? null);
+          if (!next) continue;
+          if (next === "overdue") {
+            // Not decided until a look at the feed started since has reached
+            // its end: asked for now, not left to a poll that a quietly dead
+            // live socket can hold off for five minutes.
+            if (relay.feedLookWanted(item, lastFeedLook, now)) lookWanted = true;
+            continue;
           }
+          if (next === "delivered") {
+            item.delivered = true;
+            collected.push(item);
+          } else if (next === "unlisted") {
+            item.unlistedAt = now;
+          } else if (next === "relisted") {
+            delete item.unlistedAt;
+          } else {
+            item.unconfirmed = true;
+            givenUp++;
+          }
+          await saveSent(item);
+        }
+        if (lookWanted) syncFeed();
+        if (collected.length || givenUp) {
           mergeSent();
           renderNav();
           refresh({ keepSelection: true });
           const open = byId.get(state.selectedId);
           if (open?.sent && !editorOpen()) renderDetail(open);
-          toast(collected.length === 1 ? "Your phone has it" : `Your phone has ${collected.length} of them`);
         }
+        if (collected.length) toast(collected.length === 1 ? "Saved to your phone" : `${collected.length} saved to your phone`);
         updateSync();
       } catch (e) {
         // Offline for a moment: the next look tries again.
@@ -1425,7 +1474,8 @@ async function syncFeed() {
     feedAgain = true;
     return;
   }
-  lastFeedLook = Date.now();
+  const startedAt = Date.now();
+  lastFeedLook = startedAt;
   feedRunning = true;
   const target = opened;
   // Whether the look stopped before the last entry; only one that gets there
@@ -1515,6 +1565,9 @@ async function syncFeed() {
       }
     }
     feed.short = short;
+    // Every word the phone had posted when this look started has been read:
+    // what the delivery watch waits for before giving one up (relay.afterDeliveryLook).
+    if (!short) feed.endLookFrom = startedAt;
     updateSync();
     // The counter is kept with the library even when nothing shown changed,
     // and so is a place that went back, or the next visit goes back again.
@@ -1578,6 +1631,33 @@ function changedWhilePaused() {
   feed.missing = true;
 }
 
+/**
+ * The phone's word that it took captures sent from here: [ids] are the ids
+ * sealed inside them. From its first word on, gone from the relay no longer
+ * means on the phone (relay.afterDeliveryLook); that is kept with the library,
+ * so a reload remembers it, and a new pairing starts with what its library
+ * says (snapshotSaysTook). Counted, so the library is kept and the list drawn
+ * again. Ids that match nothing sent from here yet are held for a capture
+ * still being kept (relay.keepUnmatched).
+ */
+function tookHere(ids) {
+  let n = 0;
+  if (!opened.phoneSaysTook) {
+    opened.phoneSaysTook = true;
+    n++;
+  }
+  relay.keepUnmatched(tookUnmatched, sentItems, ids);
+  const took = relay.tookFrom(sentItems, ids);
+  for (const item of took) {
+    item.delivered = true;
+    item.unconfirmed = false;
+    // Not awaited: saves are written in the order they are asked for (saveSent).
+    saveSent(item).catch(() => {});
+  }
+  if (took.length) toast(took.length === 1 ? "Saved to your phone" : `${took.length} saved to your phone`);
+  return n + took.length;
+}
+
 function applyChanges(changes) {
   let n = 0;
   for (const change of changes) {
@@ -1586,6 +1666,8 @@ function applyChanges(changes) {
       n += setPaused(change.op === "paused") ? 1 : 0;
     } else if (change.op === "result" && change.id) {
       n += settleEdit(change) ? 1 : 0;
+    } else if (change.op === "took" && Array.isArray(change.ids)) {
+      n += tookHere(change.ids);
     } else if (change.op === "files" && Array.isArray(change.files)) {
       for (const f of change.files) {
         if (!f.file || !f.data) continue;
@@ -1656,15 +1738,40 @@ function applyChanges(changes) {
 // with the same key as the library cache, so nothing typed or pasted here sits
 // readable in the browser's storage either.
 
-async function saveSent(item) {
+// Writes to the kept sent captures, saves and removals alike, one after
+// another in the order asked for: a save still sealing would otherwise land
+// after a later one, or after its capture was removed and bring it back.
+let sentWrites = Promise.resolve();
+
+function inSentOrder(work) {
+  const done = sentWrites.then(work);
+  sentWrites = done.catch(() => {});
+  return done;
+}
+
+/** Keeps [item] as it is now; written after every write asked for before. */
+function saveSent(item) {
   const target = opened;
   const key = target?.key;
-  if (!key || target.ephemeral) return;
-  const image = item.image ? new Uint8Array(await item.image.arrayBuffer()) : null;
-  const plain = { ...item, image: image ? toBase64(image) : null };
-  const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(plain)));
-  if (opened?.key !== key || !(await keptHere(target))) return;
-  await store.addSent({ id: item.id, sealed, savedAt: item.createdAt ?? Date.now() });
+  if (!key || target.ephemeral) return Promise.resolve();
+  const now = { ...item };
+  return inSentOrder(async () => {
+    // Removed since: not brought back.
+    if (!sentItems.some((i) => i.id === now.id)) return;
+    const image = now.image ? new Uint8Array(await now.image.arrayBuffer()) : null;
+    const plain = { ...now, image: image ? toBase64(image) : null };
+    const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(plain)));
+    if (opened?.key !== key || !(await keptHere(target))) return;
+    await store.addSent({ id: now.id, sealed, savedAt: now.createdAt ?? Date.now() });
+  });
+}
+
+/** Removes the kept captures with [ids], after every write asked for before. */
+function removeSent(ids) {
+  const target = opened;
+  return inSentOrder(async () => {
+    if (await keptHere(target)) await store.removeSent(ids);
+  });
 }
 
 async function loadSent(key) {
@@ -2727,6 +2834,7 @@ function persistLibrary() {
       feed: { seq: feed.seq, since: feed.since, n: feed.n },
       thumbs: [...thumbOnly],
       paused: !!target.paused,
+      phoneSaysTook: !!target.phoneSaysTook,
     };
     const sealed = await sealCache(target.key, new TextEncoder().encode(JSON.stringify(payload)));
     if (opened !== target || !(await keptHere(target))) return;
@@ -2763,6 +2871,7 @@ async function openFromCache(saved) {
     place,
     cached: true,
     paused: !!payload.paused,
+    phoneSaysTook: !!payload.phoneSaysTook,
   };
   const n = payload.feed?.n;
   feed = { seq: feedSeqAfter(payload.feed?.seq, 0) ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false, short: true };
@@ -2782,6 +2891,7 @@ function mergeSent() {
       id: "sent:" + item.id,
       sent: true,
       delivered: !!item.delivered,
+      unconfirmed: !item.delivered && !!item.unconfirmed,
       via: item.via ?? null,
       type: null,
       source: "DESKTOP",
@@ -3707,7 +3817,7 @@ function updateSync() {
   el.sync.hidden = false;
   const now = Date.now();
   const edits = [...pendingEdits.values()];
-  const sending = sentItems.filter((i) => i.relayId && !i.delivered);
+  const sending = sentItems.filter(relay.sentOut);
   const waiting = edits.length + sending.length;
   const oldest = Math.min(...edits.map((e) => e.at), ...sending.map((i) => i.createdAt ?? now), now);
   const changes = waiting === 1 ? "1 change" : `${waiting} changes`;
@@ -4131,7 +4241,9 @@ function rowFlags(c) {
   };
   if (c.pendingEdit) flag("clock", "Queued for your phone");
   if (c.reminders?.length) flag("bell", `Reminder: ${reminderWhen(c.reminders[0].at)}`);
-  if (c.sent) flag(c.delivered ? "done" : "send", c.delivered ? "On your phone" : "Waiting for your phone");
+  if (c.sent && c.delivered) flag("done", "On your phone");
+  else if (c.sent && c.unconfirmed) flag("x", "Not confirmed");
+  else if (c.sent) flag("send", "Waiting for your phone");
   const pinnedHere = state.view.kind === "collection" &&
     c.collections.some((m) => m.pinned && m.name.toLowerCase() === state.view.name.toLowerCase());
   if ((c.pinned && state.view.kind !== "pinned") || pinnedHere) flag("pin", c.pinned ? "Pinned" : "Pinned here", "pinned");
@@ -4615,12 +4727,14 @@ function renderDetail(c) {
     waiting.className = "waiting";
     const minutes = (Date.now() - (c.createdAt ?? Date.now())) / 60_000;
     waiting.textContent = c.delivered
-      ? "Your phone has it. "
-      : c.via === "relay" && minutes > 3
-        ? "Not collected yet. On the phone, turn on Captry on your computer in Captry > Settings > Network, then open Captry. "
-        : c.via === "relay"
-          ? "Sent. It arrives when Captry opens on your phone. "
-          : "Sent from this computer. ";
+      ? "Saved to your phone. "
+      : c.unconfirmed
+        ? "Not confirmed by your phone. Check there, or send it again. "
+        : c.via === "relay" && minutes > 3
+          ? "Not collected yet. On the phone, turn on Captry on your computer in Captry > Settings > Network, then open Captry. "
+          : c.via === "relay"
+            ? "Sent. It arrives when Captry opens on your phone. "
+            : "Sent from this computer. ";
     const letGo = document.createElement("button");
     letGo.type = "button";
     letGo.className = "link-button";
@@ -4629,7 +4743,7 @@ function renderDetail(c) {
     letGo.addEventListener("click", async () => {
       const id = c.id.replace(/^sent:/, "");
       sentItems = sentItems.filter((i) => i.id !== id);
-      if (await keptHere(opened)) await store.removeSent([id]);
+      await removeSent([id]);
       mergeSent();
       renderNav();
       refresh();

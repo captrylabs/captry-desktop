@@ -297,6 +297,9 @@ export function snapshotPartFits(body, index, total, seen, proof) {
   } else if (numbered !== seen.numbered || paired !== seen.paired) {
     return false;
   }
+  // Read by snapshotSaysTook: only a part that says so counts, so one without
+  // it leaves the library as a phone from before.
+  seen.took = (index === 0 || seen.took === true) && body.took === true;
   if (!numbered) return true;
   if (!counter(body.parts) || body.parts !== total || body.part !== index) return false;
   const n = body.n ?? null;
@@ -315,6 +318,19 @@ export function snapshotPartFits(body, index, total, seen, proof) {
  */
 export function snapshotArrived(seen) {
   return seen.snapshot === true && typeof seen.numbered === "boolean";
+}
+
+/**
+ * Whether the phone that sent the library names in its feed the captures it
+ * takes from this computer: every part that fitted ([seen], from
+ * snapshotPartFits) carries `took: true`, next to `pair`. Sealed in the
+ * parts, so the relay can neither add it nor take it away; known from the
+ * moment of pairing, a capture gone from the relay is never on the phone by
+ * the relay's word alone. A phone from before sends none, and some with and
+ * some without is not taken as saying it.
+ */
+export function snapshotSaysTook(seen) {
+  return seen.took === true;
 }
 
 // --- edits for the phone ------------------------------------------------------------

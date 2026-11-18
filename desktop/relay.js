@@ -284,8 +284,9 @@ export function live(token, onMessage, onState = () => {}) {
       // The wait is not reset here but on closing, once the socket has stayed up.
       openedAt = Date.now();
       onState(true);
-      // Keeps the connection from being dropped as idle; answered by the
-      // relay without waking anything up.
+      // Keeps the connection from being dropped as idle. Each one wakes the
+      // relay for a moment to be counted; more than four a minute closes the
+      // socket, and one every 45 s stays well under that.
       ping = setInterval(() => socket?.readyState === 1 && socket.send("ping"), 45_000);
     });
     socket.addEventListener("message", (event) => {
@@ -408,4 +409,120 @@ export async function pairDone(code, pageToken) {
 /** The ids still waiting for the phone. */
 export async function waiting(token) {
   return new Set(json(await call(token, "/items")).items.map((i) => i.id));
+}
+
+/**
+ * How long a capture may be gone from the relay before the phone's word that
+ * it took it is given up on: two minutes. The phone deletes it from the relay
+ * while it looks and posts its word to the feed at the end of that same look,
+ * so the word follows within seconds; this is room for a slow look. It is
+ * given up on only after a look at the feed that started this long after
+ * (afterDeliveryLook), not on the clock alone.
+ */
+export const UNCONFIRMED_AFTER_MS = 2 * 60_000;
+
+/**
+ * Whether a capture sent from here is still out: sent through the relay, and
+ * neither on the phone nor given up on. Only these count as waiting, and only
+ * these does the delivery watch ask the relay about.
+ */
+export function sentOut(item) {
+  return !!item.relayId && !item.delivered && !item.unconfirmed;
+}
+
+/**
+ * Whether Unlink loses [item] for good: still out, or given up on without the
+ * phone's word, so the phone may not have it either.
+ */
+export function lostOnUnlink(item) {
+  return sentOut(item) || (!!item.unconfirmed && !item.delivered);
+}
+
+/**
+ * What one look at the relay means for a sent [item], given whether the relay
+ * still [listed] it, whether this phone has ever said in its feed which
+ * captures it took ([givesWord]), and when the last look at the feed that
+ * reached its end started ([endLookFrom], null when none has since the
+ * library opened). Only that word, sealed in the feed, says the phone has a
+ * capture: a relay that dropped one (after 14 days) or was told to by someone
+ * holding its token would otherwise pass for the phone. A phone that has
+ * never given it may be an older build that never will, and then the relay is
+ * all there is to go on.
+ *
+ * Time alone never gives up on the word: the phone's look may be slow, the
+ * computer may wake from sleep before the page has read the feed, or a live
+ * socket may be quietly dead. So the word is given up on only when a look
+ * that started UNCONFIRMED_AFTER_MS or more after the capture left the relay
+ * read the feed to its end without it. A clock that went back past unlistedAt,
+ * or past that look, counts as no time passed.
+ *
+ * "delivered" (no word to wait for), "unlisted" (start waiting for the word,
+ * or start again after the clock went back: keep [now] as unlistedAt),
+ * "relisted" (on the relay again: the wait is over, drop unlistedAt),
+ * "unconfirmed" (such a look brought nothing), "overdue" (the time is up and
+ * no such look has been made: one is wanted, feedLookWanted), or null for no
+ * change.
+ */
+export function afterDeliveryLook(item, listed, givesWord, now, endLookFrom = null) {
+  if (!sentOut(item)) return null;
+  const waiting = Number.isFinite(item.unlistedAt);
+  if (listed) return waiting ? "relisted" : null;
+  if (!givesWord) return "delivered";
+  if (!waiting || now < item.unlistedAt) return "unlisted";
+  const due = item.unlistedAt + UNCONFIRMED_AFTER_MS;
+  if (Number.isFinite(endLookFrom) && endLookFrom >= due && endLookFrom <= now) return "unconfirmed";
+  return now >= due ? "overdue" : null;
+}
+
+/**
+ * Whether an "overdue" [item] should ask for a look at the feed now rather
+ * than wait for the next poll, given when the last look started
+ * ([lastLookFrom], whether or not it reached the end): only while no look has
+ * started since its time was up. The look asked for starts then, so each wait
+ * asks at most once; one that does not reach the end is carried on by the
+ * page's poll, which runs every half minute while the last look fell short.
+ */
+export function feedLookWanted(item, lastLookFrom, now) {
+  const due = item.unlistedAt + UNCONFIRMED_AFTER_MS;
+  return !(lastLookFrom >= due && lastLookFrom <= now);
+}
+
+/** The sent [items] the phone's "took" with [ids] puts on it: those named and not on it already. */
+export function tookFrom(items, ids) {
+  const named = new Set(Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : []);
+  return items.filter((i) => named.has(i.id) && !i.delivered);
+}
+
+/**
+ * Ids the phone named in a "took" that matched no capture sent from here,
+ * kept at most: 500, the most one "took" holds (MAX_TOOK_IDS in
+ * DesktopFeed.kt), so one entry naming another computer's captures cannot
+ * push out the newest. The word for a capture can come before the page has
+ * kept it (the relay took it and the phone read it while the answer to the
+ * send was still on its way), and is held here until then.
+ */
+export const UNMATCHED_TOOK_MAX = 500;
+
+/**
+ * Keeps in [kept], a Set, the [ids] of a "took" that match none of the sent
+ * [items], newest last, letting the oldest go past UNMATCHED_TOOK_MAX.
+ */
+export function keepUnmatched(kept, items, ids) {
+  if (!Array.isArray(ids)) return kept;
+  const known = new Set(items.map((i) => i.id));
+  for (const id of ids) {
+    if (typeof id !== "string" || known.has(id)) continue;
+    kept.delete(id);
+    kept.add(id);
+  }
+  for (const id of kept) {
+    if (kept.size <= UNMATCHED_TOOK_MAX) break;
+    kept.delete(id);
+  }
+  return kept;
+}
+
+/** Whether the phone named [item] before it was kept here; it is then taken out of [kept]. */
+export function tookEarly(kept, item) {
+  return kept.delete(item.id);
 }
