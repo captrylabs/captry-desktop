@@ -7,9 +7,10 @@
 // than by this code being careful.
 //
 // Organizing lives in library.js, which mirrors the app's Library and has no
-// DOM in it. This file is only the page.
+// DOM in it, and keeping in step with the phone in sync.js, likewise. This
+// file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, snapshotSaysTook, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=86";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=87";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +30,15 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=86";
-import * as lines from "./list-lines.js?v=86";
-import * as markup from "./note-markup.js?v=86";
-import { noteEditor } from "./note-editor.js?v=86";
-import * as store from "./store.js?v=86";
-import * as relay from "./relay.js?v=86";
-import * as pair from "./pair.js?v=86";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=86";
+} from "./library.js?v=87";
+import * as lines from "./list-lines.js?v=87";
+import * as markup from "./note-markup.js?v=87";
+import { noteEditor } from "./note-editor.js?v=87";
+import * as store from "./store.js?v=87";
+import * as relay from "./relay.js?v=87";
+import * as pair from "./pair.js?v=87";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=87";
+import { createSync, pairedStart, cachedFeed, storedIsThis, safeMime, fromBase64 } from "./sync.js?v=87";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -235,12 +237,6 @@ document.getElementById("not-loaded").remove();
  * show, and where it came from ({ kind: "paired", name: the phone }).
  */
 let opened = null;
-
-/** Captures sent from this page that the library does not show yet. */
-let sentItems = [];
-
-/** Ids the phone said it took before a capture sent from here was kept (relay.keepUnmatched). */
-const tookUnmatched = new Set();
 
 /** What is being looked at. Everything the list shows is worked out from this. */
 const state = {
@@ -473,10 +469,12 @@ async function startPairing() {
     // Captures sent before belong to the pairing they were sealed for; none
     // is shown, looked for on the relay or kept again under this one until
     // this pairing's own are read back below.
-    sentItems = [];
+    sync.sentItems = [];
     for (const [name, blob] of files) feedFiles.set(name, blob);
     for (const name of thumbs) thumbOnly.add(name);
     const place = { kind: "paired", name: phoneLabel };
+    // The phone's word on what it takes, and the place in the feed (pairedStart).
+    const start = pairedStart(parts, at);
     opened = {
       kind: "paired",
       manifest: { captures, smartCollections },
@@ -485,12 +483,9 @@ async function startPairing() {
       name: `Paired with ${phoneLabel}`,
       place,
       ephemeral: session.ephemeral,
-      // Said in the library itself, so a relay holding back the phone's word
-      // cannot keep a new pairing taking the relay's.
-      phoneSaysTook: snapshotSaysTook(parts),
+      phoneSaysTook: start.phoneSaysTook,
     };
-    // Entries the library already holds are not applied again.
-    feed = { seq: 0, since: at, n: parts.n ?? null, applied: 0, missing: false, short: true };
+    sync.feed = start.feed;
     // Not remembered: nothing about this pairing is written to the browser,
     // so closing the tab is the end of it on this computer.
     if (!session.ephemeral) await store.remember(place, key, relayToken);
@@ -498,11 +493,11 @@ async function startPairing() {
     // paired again); those it does not were another pairing's and are
     // dropped, as on any load. Not kept: the remembered pairing's are left
     // alone, as this tab writes none of its own.
-    if (!session.ephemeral) sentItems = await loadSent(key);
+    if (!session.ephemeral) sync.sentItems = await sync.loadSent(key);
     // Its pictures are kept only now the pairing is: one that failed or was
     // cancelled leaves none behind to push real ones out of the cache.
     const target = opened;
-    if (await keptHere(target)) {
+    if (await sync.keptHere(target)) {
       for (const [name, blob] of files) {
         blob.arrayBuffer()
           .then((b) => sealCache(key, new Uint8Array(b)))
@@ -563,7 +558,7 @@ async function offerRemembered({ auto = true } = {}) {
   }
   el.again.hidden = false;
   el.againName.textContent = friendlyPhone(saved.name) || "your phone";
-  sentItems = await loadSent(saved.key);
+  sync.sentItems = await sync.loadSent(saved.key);
   el.againOpen.onclick = () => openRemembered(saved);
   if (auto) await openRemembered(saved);
 }
@@ -579,7 +574,7 @@ el.againForget.addEventListener("click", async () => {
   // Tabs showing the pairing kept here close with it; others stay as they are.
   const token = await tokenHash((await store.recall())?.relayToken);
   await store.forget();
-  sentItems = [];
+  sync.sentItems = [];
   el.again.hidden = true;
   tellOtherTabs(token);
   say("Forgotten on this computer.");
@@ -597,7 +592,7 @@ function showOpened(previous) {
   el.deviceName.textContent = phone;
   el.deviceMenuName.textContent = phone;
   watchDelivery();
-  syncFeed();
+  sync.syncFeed();
   // A draft from last time comes back first, so a share arriving now adds to it.
   restoreDraft().finally(takeArrived);
   connectLive();
@@ -661,17 +656,16 @@ function closeOpened() {
   el.lbStage.replaceChildren();
   el.lbDownload.removeAttribute("href");
   picked.clear();
-  lastPhoneAt = 0;
   el.sync.hidden = true;
   thumbOnly.clear();
   requestedFull.clear();
-  tookUnmatched.clear();
   liveConnection?.stop();
   liveConnection = null;
   liveUp = false;
-  feed = { seq: 0, since: 0, n: null, applied: 0, missing: false, short: true };
+  // The place in the feed, the phone's word held for captures not kept yet,
+  // and when it last changed anything.
+  sync.closed();
   feedFiles.clear();
-  lookArrived = [];
   for (const url of fileUrls.values()) URL.revokeObjectURL(url);
   fileUrls.clear();
   urlBlobs.clear();
@@ -711,7 +705,7 @@ async function unpairedHere(oldToken) {
   const saved = await store.recall();
   if (!saved || saved.relayToken === oldToken) {
     await store.forget();
-    sentItems = [];
+    sync.sentItems = [];
   }
   await offerRemembered({ auto: false });
   say("Your phone reset its key. Pair again to keep using Captry here.", "warn");
@@ -725,7 +719,7 @@ el.close.addEventListener("click", () => {
   document.getElementById("unlink-name").textContent = opened?.place?.name ?? "your phone";
   // Those not confirmed count too: the phone may not have them, and Unlink
   // forgets them here.
-  const waiting = pendingEdits.size + trashPending.size + sentItems.filter(relay.lostOnUnlink).length;
+  const waiting = pendingEdits.size + trashPending.size + sync.sentItems.filter(relay.lostOnUnlink).length;
   const queued = document.getElementById("unlink-queued");
   queued.hidden = waiting === 0;
   queued.textContent = waiting === 1
@@ -751,7 +745,7 @@ unlinkDialog.addEventListener("close", async () => {
   // leaves that other pairing and its draft alone.
   if (storedIsThis(await store.recall(), relayToken)) {
     await store.forget();
-    sentItems = [];
+    sync.sentItems = [];
     el.again.hidden = true;
   } else {
     store.dropWrites();
@@ -800,7 +794,7 @@ tabs?.addEventListener("message", async (event) => {
   }
   if (closing || !opened) {
     // What this computer keeps now, if anything: another pairing may still be.
-    sentItems = [];
+    sync.sentItems = [];
     await offerRemembered({ auto: false });
     if (closing) say("Unlinked in another tab. Pair again to use Captry here.", "warn");
   }
@@ -809,25 +803,6 @@ tabs?.addEventListener("message", async (event) => {
 /** What goes between tabs for a relay token: its hash, or null for none. */
 async function tokenHash(relayToken) {
   return relayToken ? sha256Hex(new TextEncoder().encode(relayToken)) : null;
-}
-
-/** Whether what this computer keeps ([saved]) is the pairing with [relayToken]. */
-function storedIsThis(saved, relayToken) {
-  return !!saved && (saved.relayToken ?? null) === relayToken;
-}
-
-/**
- * Whether [target], the library open here, may write to what this computer
- * keeps: remembered, and still the pairing kept. A tab left open on another
- * pairing would otherwise write its library, draft or sent captures over the
- * one kept now. Once it is not, it never is again for this library, and the
- * tab goes on as it is, writing nothing.
- */
-async function keptHere(target) {
-  if (!target || target.ephemeral || target.notKept) return false;
-  if (storedIsThis(await store.recall(), target.relayToken ?? null)) return true;
-  target.notKept = true;
-  return false;
 }
 
 async function sha256Hex(bytes) {
@@ -1169,7 +1144,7 @@ async function saveDraft() {
   if (!key || target.ephemeral) return;
   el.newCapture.classList.toggle("has-draft", composeHasContent() && !el.compose.open);
   if (!composeHasContent()) {
-    if (await keptHere(target)) await store.saveDraft(null);
+    if (await sync.keptHere(target)) await store.saveDraft(null);
     return;
   }
   const draft = {
@@ -1185,7 +1160,7 @@ async function saveDraft() {
   };
   const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(draft)));
   // Unlinked meanwhile: nothing goes back into the storage just cleared.
-  if (opened?.key !== key || !(await keptHere(target))) return;
+  if (opened?.key !== key || !(await sync.keptHere(target))) return;
   await store.saveDraft(sealed);
 }
 
@@ -1194,7 +1169,7 @@ async function saveDraft() {
  * kept one, and the draft there belongs to the pairing that is.
  */
 async function dropDraft() {
-  if (await keptHere(opened)) store.saveDraft(null);
+  if (await sync.keptHere(opened)) store.saveDraft(null);
 }
 
 /** Puts a kept draft back into New capture, without opening it. */
@@ -1220,7 +1195,7 @@ async function restoreDraft() {
     el.composePinWhere.value = d.pinWhere ?? "";
     el.newCapture.classList.toggle("has-draft", composeHasContent());
   } catch (e) {
-    if (await keptHere(opened)) await store.saveDraft(null);
+    if (await sync.keptHere(opened)) await store.saveDraft(null);
   }
 }
 
@@ -1329,10 +1304,8 @@ el.compose.addEventListener("submit", async (event) => {
       imageHash: composeImage ? await sha256Hex(composeImage.bytes) : null,
       ...choices,
     };
-    sentItems.push(record);
-    // The phone's word may have come while the send was being answered.
-    if (relay.tookEarly(tookUnmatched, record)) record.delivered = true;
-    await saveSent(record);
+    // Kept with the captures sent, already on the phone if it said so meanwhile.
+    await sync.keepSent(record);
     resetCompose();
     el.compose.close();
     dropDraft();
@@ -1352,26 +1325,6 @@ el.compose.addEventListener("submit", async (event) => {
 });
 
 /**
- * Drops sent captures the library already has.
- *
- * The phone gives an imported capture its own id, so it is matched by its
- * words or its picture's fingerprint, either newer than the send
- * (relay.arrivedFrom). A copy the look being made applied counts too, though
- * a later change in the same look deleted it: it did reach the phone.
- */
-async function settleSent() {
-  if (!sentItems.length || !opened) return;
-  for (const item of sentItems) {
-    if (!item.imageHash && item.image) item.imageHash = await sha256Hex(new Uint8Array(await item.image.arrayBuffer()));
-  }
-  const arrived = relay.arrivedFrom(sentItems, [...opened.manifest.captures, ...lookArrived]);
-  if (!arrived.length) return;
-  const ids = arrived.map((i) => i.id);
-  sentItems = sentItems.filter((i) => !ids.includes(i.id));
-  await removeSent(ids);
-}
-
-/**
  * Checks the relay for what the phone has collected, while anything sent
  * through it is still out. Every few seconds while the page is in view, and
  * not at all once nothing is waiting, so an idle page costs the relay nothing.
@@ -1382,56 +1335,12 @@ const DELIVERY_MS = 8_000;
 function watchDelivery(delay = DELIVERY_MS) {
   clearTimeout(deliveryTimer);
   const out = () => opened?.relayToken &&
-    (sentItems.some(relay.sentOut) || [...pendingEdits.values()].some((e) => !e.collected));
+    (sync.sentItems.some(relay.sentOut) || [...pendingEdits.values()].some((e) => !e.collected));
   if (!out()) return;
   deliveryTimer = setTimeout(async () => {
     if (document.visibilityState === "visible" && out()) {
       try {
-        const target = opened;
-        const still = await relay.waiting(target.relayToken);
-        // Another pairing opened meanwhile: this mailbox says nothing of its captures.
-        if (opened !== target) throw new Error("closed");
-        for (const edit of pendingEdits.values()) if (!edit.collected && !still.has(edit.relayId)) edit.collected = true;
-        // Gone from the relay is on the phone only for a phone that has never
-        // said what it took; one that has is waited for (relay.afterDeliveryLook).
-        const now = Date.now();
-        const givesWord = !!opened.phoneSaysTook;
-        const collected = [];
-        let givenUp = 0;
-        let lookWanted = false;
-        for (const item of sentItems) {
-          const next = relay.afterDeliveryLook(item, still.has(item.relayId), givesWord, now, feed.endLookFrom ?? null);
-          if (!next) continue;
-          if (next === "overdue") {
-            // Not decided until a look at the feed started since has reached
-            // its end: asked for now, not left to a poll that a quietly dead
-            // live socket can hold off for five minutes.
-            if (relay.feedLookWanted(item, lastFeedLook, now)) lookWanted = true;
-            continue;
-          }
-          if (next === "delivered") {
-            item.delivered = true;
-            collected.push(item);
-          } else if (next === "unlisted") {
-            item.unlistedAt = now;
-          } else if (next === "relisted") {
-            delete item.unlistedAt;
-          } else {
-            item.unconfirmed = true;
-            givenUp++;
-          }
-          await saveSent(item);
-        }
-        if (lookWanted) syncFeed();
-        if (collected.length || givenUp) {
-          mergeSent();
-          renderNav();
-          refresh({ keepSelection: true });
-          const open = byId.get(state.selectedId);
-          if (open?.sent && !editorOpen()) renderDetail(open);
-        }
-        if (collected.length) toast(collected.length === 1 ? "Saved to your phone" : `${collected.length} saved to your phone`);
-        updateSync();
+        await sync.deliveryLook();
       } catch (e) {
         // Offline for a moment: the next look tries again.
       }
@@ -1443,381 +1352,87 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") watchDelivery();
 });
 
-/**
- * The phone's changes since pairing, through the relay's feed.
- *
- * On opening, every kept entry newer than the library is applied in order;
- * after that, only new ones, every half minute while the page is in view.
- * An upsert replaces or adds a capture, with any new pictures; a delete
- * removes one.
- *
- * `short` is true until a look reaches the last entry, and only then may the
- * page say "Up to date": a library just opened has not looked yet.
- */
-let feed = { seq: 0, since: 0, n: null, applied: 0, missing: false, short: true };
 const feedFiles = new Map(); // picture name -> Blob, as the phone sent it
-// What each upsert applied in the look being made showed that a sent capture
-// is matched on (settleSent), kept until the look ends: a later change in the
-// same look may delete the copy before the look gets to settle. Kept beside
-// the feed, so closing the library drops it with the rest and a look still
-// running for that library cannot settle another's sent captures with it.
-let lookArrived = [];
 const FEED_MS = 30_000;
-let feedRunning = false;
-let feedAgain = false;
 
-async function syncFeed() {
-  if (!opened?.relayToken || !opened.key) return;
-  // Told again while looking: look once more straight after, not in 5 minutes.
-  if (feedRunning) {
-    feedAgain = true;
-    return;
-  }
-  const startedAt = Date.now();
-  lastFeedLook = startedAt;
-  feedRunning = true;
-  const target = opened;
-  // Whether the look stopped before the last entry; only one that gets there
-  // may say "Up to date". feed.short is left as the last look left it until
-  // this one ends, so a routine look does not turn the pill to "Connecting";
-  // one that runs on past FEED_LOOK_FRESH_MS does (feedUpToDate).
-  let short = true;
-  // Whether this look went back to read the feed again (feedPlaceBack).
-  let wentBack = false;
-  try {
-    let changed = 0;
-    let counted = false;
-    pages: for (let pages = 1; ; pages++) {
-      const before = feed.seq;
-      const page = await relay.feedSince(target.relayToken, feed.seq);
-      if (opened !== target) return;
-      // The place is past the relay's last entry, which no honest answer
-      // leads to: read what it holds again, from where it says it starts.
-      // Once a look, so a relay that does it again cannot keep a look going;
-      // such a look is not at the end, whatever it reads after.
-      const back = feedPlaceBack(feed.seq, page.latest, page.trimmedThrough);
-      if (back !== null) {
-        if (wentBack) break;
-        wentBack = true;
-        feed.seq = back;
-        continue;
-      }
-      // Entries were dropped for age or room after this library was made,
-      // so something in between may be missing.
-      if (feed.seq === 0 && page.trimmedThrough > 0 && page.entries[0] && page.entries[0].createdAt > feed.since) {
-        feed.missing = true;
-      }
-      for (const entry of page.entries) {
-        // Only a number past the last: the place is kept, and one set
-        // anywhere else would stop updates until pairing again.
-        const seq = feedSeqAfter(entry?.seq, feed.seq);
-        if (seq === null) continue;
-        lastPhoneAt = Math.max(lastPhoneAt, entry.createdAt ?? 0);
-        // The place moves past an entry only once it is dealt with for good:
-        // applied, passed over on purpose, or gone from the relay.
-        // Written well before the library was made: already in it.
-        if (entry.createdAt < feed.since - 5 * 60_000) {
-          feed.seq = seq;
-          continue;
-        }
-        let sealed;
-        try {
-          sealed = await relay.feedEntry(target.relayToken, entry.seq);
-        } catch (e) {
-          // Refused for now or not reached: stop here, and the next look
-          // asks for this one again.
-          if (relay.afterFeedEntryFailed(e?.status) === "stop") break pages;
-          // Trimmed between the list and the fetch: a change was lost.
-          feed.missing = true;
-          feed.seq = seq;
-          continue;
-        }
-        if (opened !== target) return;
-        const body = await openFeed(target.key, sealed);
-        if (!body || body.at < feed.since) {
-          feed.seq = seq;
-          continue;
-        }
-        // Served again by the relay, or not numbered as the phone numbers them.
-        const count = feedCounterAfter(body, feed.n);
-        if (!count.apply) {
-          feed.seq = seq;
-          continue;
-        }
-        if (feed.n !== count.highest) {
-          feed.n = count.highest;
-          counted = true;
-        }
-        // The phone reset its key: this computer's copy is no longer kept up
-        // to date, and nothing it sends would be read. Forget it here.
-        if (body.changes?.some((c) => c.op === "unpaired")) {
-          await unpairedHere(target.relayToken);
-          return;
-        }
-        changed += applyChanges(body.changes);
-        feed.seq = seq;
-      }
-      if (!relay.moreFeedPages(page.entries.length, before, feed.seq, pages)) {
-        // Stopped at the cap with more to read, the next look carries on.
-        short = wentBack || relay.feedPagesCapped(page.entries.length, before, feed.seq, pages);
-        break;
-      }
-    }
-    feed.short = short;
-    // Every word the phone had posted when this look started has been read:
-    // what the delivery watch waits for before giving one up (relay.afterDeliveryLook).
-    if (!short) feed.endLookFrom = startedAt;
+// The phone's feed, its changes applied to the library, and the captures sent
+// from here (sync.js). What it draws, says and keeps is the page's, below.
+const sync = createSync({
+  opened: () => opened,
+  net: relay,
+  store,
+  openFeed,
+  sealCache,
+  openCache,
+  sha256Hex,
+  now: () => Date.now(),
+  feedFiles,
+  thumbOnly,
+  updateSync,
+  persistLibrary,
+  redrawFeed() {
+    mergeSent();
+    renderNav();
+    refresh({ keepSelection: true });
+    // Not under someone typing: the panel is redrawn when they finish.
+    const open = byId.get(state.selectedId);
+    if (open && !editorOpen()) renderDetail(open);
+  },
+  redrawSent() {
+    mergeSent();
+    renderNav();
+    refresh({ keepSelection: true });
+    const open = byId.get(state.selectedId);
+    if (open?.sent && !editorOpen()) renderDetail(open);
+  },
+  savedToPhone(count) {
+    toast(count === 1 ? "Saved to your phone" : `${count} saved to your phone`);
+  },
+  pausedChanged(paused) {
     updateSync();
-    // The counter is kept with the library even when nothing shown changed,
-    // and so is a place that went back, or the next visit goes back again.
-    if ((counted || wentBack) && !changed) persistLibrary();
-    if (changed) {
-      persistLibrary();
-      feed.applied += changed;
-      await settleSent();
-      mergeSent();
-      renderNav();
-      refresh({ keepSelection: true });
-      // Not under someone typing: the panel is redrawn when they finish.
-      const open = byId.get(state.selectedId);
-      if (open && !editorOpen()) renderDetail(open);
-    }
-    if (feed.missing && !feed.warned) {
-      feed.warned = true;
-      toast("Some of your phone's changes are older than two weeks and were not kept. Pair again to see everything.");
-    }
-  } catch (e) {
-    // Offline for a moment, or the relay is busy: the next look tries again.
-    if (opened === target) {
-      feed.short = true;
-      updateSync();
-      // The next look starts past what this one applied, so a copy it saw
-      // and then saw deleted is settled now or never.
-      if (lookArrived.length) await settleSent().catch(() => {});
-    }
-  } finally {
-    lookArrived = [];
-    feedRunning = false;
-    if (feedAgain && opened) {
-      feedAgain = false;
-      syncFeed();
-    }
-  }
-}
+    toast(paused ? PAUSED : "Syncing with your phone again");
+  },
+  changesLost() {
+    toast("Some of your phone's changes are older than two weeks and were not kept. Pair again to see everything.");
+  },
+  unpaired: unpairedHere,
+  settleEdit,
+  editsOver,
+  editsCollected(still) {
+    for (const edit of pendingEdits.values()) if (!edit.collected && !still.has(edit.relayId)) edit.collected = true;
+  },
+  forgetPictureUrl(name) {
+    const old = fileUrls.get(name);
+    if (old) URL.revokeObjectURL(old);
+    fileUrls.delete(name);
+  },
+  pictureArrived: lightboxArrived,
+});
 
 // --- paused ------------------------------------------------------------------------
 //
-// Pro ended on the phone: it says so through the feed, collects what was
-// already waiting and then sends and takes nothing more. The library here
-// stays readable; captures and edits from here stop, since nothing would
-// collect them. Its word that Pro is back, or any change after it, starts
-// things again.
+// Pro ended on the phone: it says so through the feed (sync.js), and the
+// page stops sending captures and edits until it says Pro is back.
 
 const PAUSED = "Sync is paused. Captry Pro ended on your phone.";
 
-/** True when it changed. */
-function setPaused(paused) {
-  if (!opened || !!opened.paused === paused) return false;
-  opened.paused = paused;
-  updateSync();
-  toast(paused ? PAUSED : "Syncing with your phone again");
-  return true;
-}
-
 /**
- * A change from a phone last heard to be paused: its word that Pro was back
- * was dropped for age, and other changes may have gone with it.
+ * For a copy of a capture the phone sent (sync.applyChanges): true when it
+ * stays out of sight for now, else false, with this page's edits the phone
+ * has not answered yet shown on top of it.
  */
-function changedWhilePaused() {
-  if (!opened.paused) return;
-  setPaused(false);
-  feed.missing = true;
-}
-
-/**
- * The phone's word that it took captures sent from here: [ids] are the ids
- * sealed inside them. From its first word on, gone from the relay no longer
- * means on the phone (relay.afterDeliveryLook); that is kept with the library,
- * so a reload remembers it, and a new pairing starts with what its library
- * says (snapshotSaysTook). Counted, so the library is kept and the list drawn
- * again. Ids that match nothing sent from here yet are held for a capture
- * still being kept (relay.keepUnmatched).
- */
-function tookHere(ids) {
-  let n = 0;
-  if (!opened.phoneSaysTook) {
-    opened.phoneSaysTook = true;
-    n++;
+function editsOver(capture) {
+  // Waiting out its Undo in Trash: stays out of sight until that is settled.
+  if (trashPending.has(capture.id)) return true;
+  if ([...pendingEdits.values()].some((e) => e.captureId === capture.id && e.ops.some((o) => o.op === "trash"))) return true;
+  // An edit the phone has not answered yet may be newer than this copy:
+  // keep showing it on top.
+  for (const [id, edit] of pendingEdits) {
+    if (edit.captureId !== capture.id) continue;
+    applyOpsHere(capture, edit.ops);
+    capture.pendingEdit = id;
   }
-  relay.keepUnmatched(tookUnmatched, sentItems, ids);
-  const took = relay.tookFrom(sentItems, ids);
-  for (const item of took) {
-    item.delivered = true;
-    item.unconfirmed = false;
-    // Not awaited: saves are written in the order they are asked for (saveSent).
-    saveSent(item).catch(() => {});
-  }
-  if (took.length) toast(took.length === 1 ? "Saved to your phone" : `${took.length} saved to your phone`);
-  return n + took.length;
-}
-
-function applyChanges(changes) {
-  let n = 0;
-  for (const change of changes) {
-    if (change.op === "paused" || change.op === "resumed") {
-      // Counted, so it is kept with the library and the page is drawn again.
-      n += setPaused(change.op === "paused") ? 1 : 0;
-    } else if (change.op === "result" && change.id) {
-      n += settleEdit(change) ? 1 : 0;
-    } else if (change.op === "took" && Array.isArray(change.ids)) {
-      n += tookHere(change.ids);
-    } else if (change.op === "files" && Array.isArray(change.files)) {
-      for (const f of change.files) {
-        if (!f.file || !f.data) continue;
-        const bytes = fromBase64(f.data);
-        const known = opened.manifest.captures.find((c) => c.id === change.capture)?.files.find((x) => x.file === f.file);
-        feedFiles.set(f.file, new Blob([bytes], { type: safeMime(known?.mimeType) }));
-        thumbOnly.delete(f.file);
-        const old = fileUrls.get(f.file);
-        if (old) URL.revokeObjectURL(old);
-        fileUrls.delete(f.file);
-        const target = opened;
-        if (!target.ephemeral) sealCache(target.key, bytes).then((sealed) => opened === target && store.saveImage(f.file, sealed));
-        lightboxArrived(f.file);
-        n++;
-      }
-    } else if (change.op === "delete" && change.id) {
-      changedWhilePaused();
-      const before = opened.manifest.captures.length;
-      opened.manifest.captures = opened.manifest.captures.filter((c) => c.id !== change.id);
-      n += before - opened.manifest.captures.length;
-    } else if (change.op === "upsert" && change.capture) {
-      const capture = decodeCapture(change.capture);
-      if (!capture?.id) continue;
-      changedWhilePaused();
-      // On the phone now, whatever a later change in this look does to it.
-      lookArrived.push({
-        text: capture.text?.trim(),
-        capturedAt: capture.capturedAt,
-        files: (capture.files ?? []).filter((f) => f.hash).map((f) => ({ hash: f.hash.toLowerCase() })),
-      });
-      for (const f of change.files ?? []) {
-        if (!f.file || !f.data) continue;
-        const mime = capture.files.find((x) => x.file === f.file)?.mimeType ?? "";
-        // A picture comes as a small copy; opening it asks for the full one.
-        // One this computer sent is here in full already, so that is kept.
-        const hash = capture.files.find((x) => x.file === f.file)?.hash?.toLowerCase();
-        const mine = f.thumb && hash ? sentItems.find((i) => i.image && i.imageHash === hash)?.image : null;
-        if (mine) {
-          feedFiles.set(f.file, mine);
-          thumbOnly.delete(f.file);
-          const target = opened;
-          if (!target.ephemeral) mine.arrayBuffer().then((b) => sealCache(target.key, new Uint8Array(b))).then((sealed) => opened === target && store.saveImage(f.file, sealed));
-          continue;
-        }
-        const bytes = fromBase64(f.data);
-        feedFiles.set(f.file, new Blob([bytes], { type: safeMime(mime) }));
-        if (f.thumb) thumbOnly.add(f.file);
-        else thumbOnly.delete(f.file);
-        const target = opened;
-        if (!target.ephemeral) sealCache(target.key, bytes).then((sealed) => opened === target && store.saveImage(f.file, sealed));
-      }
-      // Waiting out its Undo in Trash: stays out of sight until that is settled.
-      if (trashPending.has(capture.id)) continue;
-      if ([...pendingEdits.values()].some((e) => e.captureId === capture.id && e.ops.some((o) => o.op === "trash"))) continue;
-      // An edit the phone has not answered yet may be newer than this copy:
-      // keep showing it on top.
-      for (const [id, edit] of pendingEdits) {
-        if (edit.captureId !== capture.id) continue;
-        applyOpsHere(capture, edit.ops);
-        capture.pendingEdit = id;
-      }
-      opened.manifest.captures = opened.manifest.captures.filter((c) => c.id !== capture.id);
-      opened.manifest.captures.push(capture);
-      n++;
-    }
-  }
-  return n;
-}
-
-// --- what was sent from here, kept sealed ------------------------------------------------
-//
-// A capture made on this page waits in IndexedDB until the phone's feed shows
-// it back, which can be a while if the phone stays in a pocket. It is sealed
-// with the same key as the library cache, so nothing typed or pasted here sits
-// readable in the browser's storage either.
-
-// Writes to the kept sent captures, saves and removals alike, one after
-// another in the order asked for: a save still sealing would otherwise land
-// after a later one, or after its capture was removed and bring it back.
-let sentWrites = Promise.resolve();
-
-function inSentOrder(work) {
-  const done = sentWrites.then(work);
-  sentWrites = done.catch(() => {});
-  return done;
-}
-
-/** Keeps [item] as it is now; written after every write asked for before. */
-function saveSent(item) {
-  const target = opened;
-  const key = target?.key;
-  if (!key || target.ephemeral) return Promise.resolve();
-  const now = { ...item };
-  return inSentOrder(async () => {
-    // Removed since: not brought back.
-    if (!sentItems.some((i) => i.id === now.id)) return;
-    const image = now.image ? new Uint8Array(await now.image.arrayBuffer()) : null;
-    const plain = { ...now, image: image ? toBase64(image) : null };
-    const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(plain)));
-    if (opened?.key !== key || !(await keptHere(target))) return;
-    await store.addSent({ id: now.id, sealed, savedAt: now.createdAt ?? Date.now() });
-  });
-}
-
-/** Removes the kept captures with [ids], after every write asked for before. */
-function removeSent(ids) {
-  const target = opened;
-  return inSentOrder(async () => {
-    if (await keptHere(target)) await store.removeSent(ids);
-  });
-}
-
-async function loadSent(key) {
-  const records = (await store.sent()) ?? [];
-  const items = [];
-  const stale = [];
-  for (const record of records) {
-    const bytes = key && record?.sealed ? await openCache(key, record.sealed) : null;
-    if (!bytes) {
-      // Kept readable by an earlier version of this page, or under another
-      // key: not shown, and not kept.
-      if (record?.id) stale.push(record.id);
-      continue;
-    }
-    try {
-      const item = JSON.parse(new TextDecoder().decode(bytes));
-      item.image = item.image ? new Blob([fromBase64(item.image)], { type: safeMime(item.mimeType) }) : null;
-      items.push(item);
-    } catch (e) {
-      if (record?.id) stale.push(record.id);
-    }
-  }
-  if (stale.length) await store.removeSent(stale);
-  return items;
-}
-
-/** The type a blob may carry: a picture's or a sound's, else plain bytes. */
-function safeMime(mime) {
-  const m = String(mime ?? "").toLowerCase().split(";")[0].trim();
-  return /^(image\/(jpeg|png|gif|webp|heic|heif|avif|bmp)|audio\/[a-z0-9.+-]+)$/.test(m) ? m : "application/octet-stream";
-}
-
-function fromBase64(text) {
-  const binary = atob(text);
-  const out = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-  return out;
+  return false;
 }
 
 setInterval(() => {
@@ -1825,11 +1440,11 @@ setInterval(() => {
   // only a safety net then. A look that did not reach the end (stopped at
   // the cap, cut off, or gone back) is carried on at this pace all the same.
   if (document.visibilityState !== "visible") return;
-  if (liveUp && !feed.short && Date.now() - lastFeedLook < 5 * 60_000) return;
-  syncFeed();
+  if (liveUp && !sync.feed.short && Date.now() - sync.lastFeedLook < 5 * 60_000) return;
+  sync.syncFeed();
 }, FEED_MS);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") syncFeed();
+  if (document.visibilityState === "visible") sync.syncFeed();
 });
 
 // --- editing, applied on the phone -----------------------------------------------------
@@ -2792,7 +2407,6 @@ function redraw() {
 let liveConnection = null;
 let liveToken = null;
 let liveUp = false;
-let lastFeedLook = 0;
 
 function connectLive() {
   if (!opened?.relayToken) return;
@@ -2802,14 +2416,14 @@ function connectLive() {
   liveConnection = relay.live(
     opened.relayToken,
     (message) => {
-      if (message.type === "feed") syncFeed();
+      if (message.type === "feed") sync.syncFeed();
       if (message.type === "items") watchDelivery(0);
     },
     (up) => {
       liveUp = up;
       updateSync();
       // Catch up on anything said while the connection was down.
-      if (up) syncFeed();
+      if (up) sync.syncFeed();
     },
   );
 }
@@ -2840,13 +2454,13 @@ function persistLibrary() {
       name: target.name,
       smartCollections: target.manifest.smartCollections,
       captures,
-      feed: { seq: feed.seq, since: feed.since, n: feed.n },
+      feed: { seq: sync.feed.seq, since: sync.feed.since, n: sync.feed.n },
       thumbs: [...thumbOnly],
       paused: !!target.paused,
       phoneSaysTook: !!target.phoneSaysTook,
     };
     const sealed = await sealCache(target.key, new TextEncoder().encode(JSON.stringify(payload)));
-    if (opened !== target || !(await keptHere(target))) return;
+    if (opened !== target || !(await sync.keptHere(target))) return;
     await store.saveLibrary({ name: target.name, placeKind: target.place.kind, sealed, savedAt: Date.now(), paused: !!target.paused });
   }, 1500);
 }
@@ -2882,10 +2496,9 @@ async function openFromCache(saved) {
     paused: !!payload.paused,
     phoneSaysTook: !!payload.phoneSaysTook,
   };
-  const n = payload.feed?.n;
-  feed = { seq: feedSeqAfter(payload.feed?.seq, 0) ?? 0, since: payload.feed?.since ?? 0, n: Number.isSafeInteger(n) ? n : null, applied: 0, missing: false, short: true };
-  sentItems = await loadSent(saved.key);
-  await settleSent();
+  sync.feed = cachedFeed(payload.feed);
+  sync.sentItems = await sync.loadSent(saved.key);
+  await sync.settleSent();
   showOpened(null);
   return true;
 }
@@ -2894,7 +2507,7 @@ async function openFromCache(saved) {
 function mergeSent() {
   if (!opened) return;
   opened.manifest.captures = opened.manifest.captures.filter((c) => !c.sent);
-  for (const item of sentItems) {
+  for (const item of sync.sentItems) {
     const url = (item.text ?? "").match(/https?:\/\/\S+/)?.[0] ?? null;
     opened.manifest.captures.push({
       id: "sent:" + item.id,
@@ -3816,8 +3429,6 @@ function openKeys() {
 // The paired phone and a dot in the header: up to date, changes queued,
 // waiting on a phone that has not looked in a while, or offline.
 
-let lastPhoneAt = 0;
-
 function updateSync() {
   if (!opened?.relayToken) {
     el.sync.hidden = true;
@@ -3826,7 +3437,7 @@ function updateSync() {
   el.sync.hidden = false;
   const now = Date.now();
   const edits = [...pendingEdits.values()];
-  const sending = sentItems.filter(relay.sentOut);
+  const sending = sync.sentItems.filter(relay.sentOut);
   const waiting = edits.length + sending.length;
   const oldest = Math.min(...edits.map((e) => e.at), ...sending.map((i) => i.createdAt ?? now), now);
   const changes = waiting === 1 ? "1 change" : `${waiting} changes`;
@@ -3844,9 +3455,9 @@ function updateSync() {
   } else if (waiting) {
     [state, short, full, detail] = ["saving", `${waiting} queued`, `${changes} queued`,
       "Your phone applies them the next time it checks in."];
-  } else if (liveUp && relay.feedUpToDate(feed.short, feedRunning, lastFeedLook, now)) {
+  } else if (liveUp && relay.feedUpToDate(sync.feed.short, sync.feedRunning, sync.lastFeedLook, now)) {
     [state, short, full] = ["ok", "Synced", "Up to date"];
-    detail = lastPhoneAt ? `Last change ${ago(lastPhoneAt, now)}` : "Connected to your phone";
+    detail = sync.lastPhoneAt ? `Last change ${ago(sync.lastPhoneAt, now)}` : "Connected to your phone";
   } else {
     [state, short, full, detail] = ["off", "Connecting", "Connecting…", "Reaching Captry's relay."];
   }
@@ -4751,8 +4362,8 @@ function renderDetail(c) {
     letGo.title = "Hides it on this computer. It does not take it back from the phone.";
     letGo.addEventListener("click", async () => {
       const id = c.id.replace(/^sent:/, "");
-      sentItems = sentItems.filter((i) => i.id !== id);
-      await removeSent([id]);
+      sync.sentItems = sync.sentItems.filter((i) => i.id !== id);
+      await sync.removeSent([id]);
       mergeSent();
       renderNav();
       refresh();
@@ -5669,6 +5280,6 @@ function remember(key, value) {
 }
 
 // For checking the page with a fixture, without a file picker in the way.
-window.captryViewer = { state: () => ({ cached: !!opened?.cached, live: liveUp, seq: feed.seq, paused: !!opened?.paused }) };
+window.captryViewer = { state: () => ({ cached: !!opened?.cached, live: liveUp, seq: sync.feed.seq, paused: !!opened?.paused }) };
 
 offerRemembered();
