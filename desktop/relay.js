@@ -494,6 +494,37 @@ export function tookFrom(items, ids) {
 }
 
 /**
+ * How much older than a send the phone's copy may say it is and still be that
+ * send's: the phone dates an imported capture by its own clock, which may run
+ * a little behind this computer's.
+ */
+export const SENT_MATCH_SLACK_MS = 60_000;
+
+/**
+ * The sent [items] the phone's copies in [captures] show have arrived: one
+ * with the same words, or a picture with the same fingerprint, dated no more
+ * than SENT_MATCH_SLACK_MS before the send. The phone gives an imported
+ * capture its own id, so nothing else ties the two. [captures] are the
+ * library's and the copies a look applied that may since have gone; an item's
+ * imageHash is worked out before this is asked.
+ */
+export function arrivedFrom(items, captures) {
+  const texts = new Map();
+  const hashes = new Map();
+  const later = (map, key, at) => map.set(key, Math.max(map.get(key) ?? 0, at ?? 0));
+  for (const c of captures) {
+    if (c.sent) continue;
+    if (c.text) later(texts, c.text.trim(), c.capturedAt);
+    for (const f of c.files ?? []) if (f.hash) later(hashes, f.hash.toLowerCase(), c.capturedAt);
+  }
+  return items.filter((item) => {
+    const byText = item.text && (texts.get(item.text.trim()) ?? -1) >= item.createdAt - SENT_MATCH_SLACK_MS;
+    const byImage = item.imageHash && (hashes.get(item.imageHash) ?? -1) >= item.createdAt - SENT_MATCH_SLACK_MS;
+    return byText || byImage;
+  });
+}
+
+/**
  * Ids the phone named in a "took" that matched no capture sent from here,
  * kept at most: 500, the most one "took" holds (MAX_TOOK_IDS in
  * DesktopFeed.kt), so one entry naming another computer's captures cannot

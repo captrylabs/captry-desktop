@@ -9,7 +9,7 @@
 // Organizing lives in library.js, which mirrors the app's Library and has no
 // DOM in it. This file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, snapshotSaysTook, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=85";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, feedCounterAfter, feedSeqAfter, feedPlaceBack, snapshotStatus, snapshotPartFits, snapshotArrived, snapshotSaysTook, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=86";
 import {
   FILTERS,
   RANGES,
@@ -29,14 +29,14 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=85";
-import * as lines from "./list-lines.js?v=85";
-import * as markup from "./note-markup.js?v=85";
-import { noteEditor } from "./note-editor.js?v=85";
-import * as store from "./store.js?v=85";
-import * as relay from "./relay.js?v=85";
-import * as pair from "./pair.js?v=85";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=85";
+} from "./library.js?v=86";
+import * as lines from "./list-lines.js?v=86";
+import * as markup from "./note-markup.js?v=86";
+import { noteEditor } from "./note-editor.js?v=86";
+import * as store from "./store.js?v=86";
+import * as relay from "./relay.js?v=86";
+import * as pair from "./pair.js?v=86";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=86";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -671,6 +671,7 @@ function closeOpened() {
   liveUp = false;
   feed = { seq: 0, since: 0, n: null, applied: 0, missing: false, short: true };
   feedFiles.clear();
+  lookArrived = [];
   for (const url of fileUrls.values()) URL.revokeObjectURL(url);
   fileUrls.clear();
   urlBlobs.clear();
@@ -1354,24 +1355,16 @@ el.compose.addEventListener("submit", async (event) => {
  * Drops sent captures the library already has.
  *
  * The phone gives an imported capture its own id, so it is matched by its
- * words or its picture's fingerprint, either newer than the send.
+ * words or its picture's fingerprint, either newer than the send
+ * (relay.arrivedFrom). A copy the look being made applied counts too, though
+ * a later change in the same look deleted it: it did reach the phone.
  */
 async function settleSent() {
   if (!sentItems.length || !opened) return;
-  const texts = new Map();
-  const hashes = new Map();
-  for (const c of opened.manifest.captures) {
-    if (c.sent) continue;
-    if (c.text) texts.set(c.text.trim(), Math.max(texts.get(c.text.trim()) ?? 0, c.capturedAt ?? 0));
-    for (const f of c.files) if (f.hash) hashes.set(f.hash.toLowerCase(), Math.max(hashes.get(f.hash.toLowerCase()) ?? 0, c.capturedAt ?? 0));
-  }
-  const arrived = [];
   for (const item of sentItems) {
     if (!item.imageHash && item.image) item.imageHash = await sha256Hex(new Uint8Array(await item.image.arrayBuffer()));
-    const byText = item.text && (texts.get(item.text.trim()) ?? -1) >= item.createdAt - 60_000;
-    const byImage = item.imageHash && (hashes.get(item.imageHash) ?? -1) >= item.createdAt - 60_000;
-    if (byText || byImage) arrived.push(item);
   }
+  const arrived = relay.arrivedFrom(sentItems, [...opened.manifest.captures, ...lookArrived]);
   if (!arrived.length) return;
   const ids = arrived.map((i) => i.id);
   sentItems = sentItems.filter((i) => !ids.includes(i.id));
@@ -1463,6 +1456,12 @@ document.addEventListener("visibilitychange", () => {
  */
 let feed = { seq: 0, since: 0, n: null, applied: 0, missing: false, short: true };
 const feedFiles = new Map(); // picture name -> Blob, as the phone sent it
+// What each upsert applied in the look being made showed that a sent capture
+// is matched on (settleSent), kept until the look ends: a later change in the
+// same look may delete the copy before the look gets to settle. Kept beside
+// the feed, so closing the library drops it with the rest and a look still
+// running for that library cannot settle another's sent captures with it.
+let lookArrived = [];
 const FEED_MS = 30_000;
 let feedRunning = false;
 let feedAgain = false;
@@ -1592,8 +1591,12 @@ async function syncFeed() {
     if (opened === target) {
       feed.short = true;
       updateSync();
+      // The next look starts past what this one applied, so a copy it saw
+      // and then saw deleted is settled now or never.
+      if (lookArrived.length) await settleSent().catch(() => {});
     }
   } finally {
+    lookArrived = [];
     feedRunning = false;
     if (feedAgain && opened) {
       feedAgain = false;
@@ -1692,6 +1695,12 @@ function applyChanges(changes) {
       const capture = decodeCapture(change.capture);
       if (!capture?.id) continue;
       changedWhilePaused();
+      // On the phone now, whatever a later change in this look does to it.
+      lookArrived.push({
+        text: capture.text?.trim(),
+        capturedAt: capture.capturedAt,
+        files: (capture.files ?? []).filter((f) => f.hash).map((f) => ({ hash: f.hash.toLowerCase() })),
+      });
       for (const f of change.files ?? []) {
         if (!f.file || !f.data) continue;
         const mime = capture.files.find((x) => x.file === f.file)?.mimeType ?? "";

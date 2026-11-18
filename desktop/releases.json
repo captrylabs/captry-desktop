@@ -2,6 +2,34 @@
   "about": "SHA-256 of each release of captry.app/desktop/. The index hash covers the page: index.html pins every script it loads by its SHA-384. Check it with: curl -s https://captry.app/desktop/ | shasum -a 256",
   "releases": [
     {
+      "release": 86,
+      "date": "2026-11-18",
+      "index": "3ac17db14cbd10651816d0cb1bde4c68bad4d146173dc8c3f3ca803d124459df",
+      "files": {
+        "library-format.js": "b218022978d162d37676f6ac9a3527e7f32cc9e9637198abf9359b4411bcf621",
+        "library.js": "7be16786cc8352ae51da60eea4515d9efae1a32b1cd167cfff568288c01efd6f",
+        "list-lines.js": "a9635043bd16a8a81bb451165ec7d20c15174d6cfc707ab16cb9ba7c0d83e389",
+        "note-editor.js": "73e994ecd01247d0ca067ee27a974b26d26e27087bcde3bc8a5fb4905513c728",
+        "note-markup.js": "a648456b27104d2dce6c79bd8ddd3e6410455def4a087457555ff112e20e30e9",
+        "pair.js": "887a018bc9dba1e74129878ddd8ab18c190419ba65b63414bdb4a9acb52c9791",
+        "qr.js": "aae0dabc19268edd1f5bda26f50e4720d5a7cfcf4d1995401f522e7b11ca2326",
+        "relay.js": "2c5ae3925460ef8d4dffc96243873c6e2533a9901c47682302cde7357bb58e2f",
+        "store.js": "c2664b82ed0580c324da39f73feafd0fb17906c046656b854393f577be2b7ba0",
+        "viewer.js": "17f042102decd0495e414568e5d190f0a2b7765cac3e1969af977429b5986a1b",
+        "manifest.webmanifest": "5bbbf4eb793a7616a4400b16633ae20ba2caaa10e62abd8775568e6d5dbaf216"
+      },
+      "headers": {
+        "cache-control": "public, max-age=300, must-revalidate, no-transform",
+        "content-security-policy": "default-src 'none'; script-src 'self' 'sha256-imFCb2XgNpbrWHXivrp/m/TpXWfAuZkfx4D4WPEHwG4='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "cross-origin-opener-policy": "same-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-robots-tag": "noindex"
+      }
+    },
+    {
       "release": 85,
       "date": "2026-11-18",
       "index": "415d1d75edf8be8db6ce8398842b834be7c9879efdbad37b6ce4579c32fde6e2",
