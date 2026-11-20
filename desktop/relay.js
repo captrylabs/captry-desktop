@@ -254,6 +254,14 @@ export function afterFeedEntryFailed(status) {
 export const LIVE_STEADY_MS = 30_000;
 const LIVE_FIRST_MS = 1000;
 
+/**
+ * [delay] spread over half to one and a half times itself ([r] from 0 to 1),
+ * so pages the relay dropped together do not all come back in the same second.
+ */
+export function jittered(delay, r = Math.random()) {
+  return Math.round(delay * (0.5 + r));
+}
+
 /** The wait before reconnecting, given the current one and how long the socket was open (0 if it never opened). */
 export function liveDelayAfter(delay, openFor) {
   return openFor >= LIVE_STEADY_MS ? LIVE_FIRST_MS : delay;
@@ -306,7 +314,7 @@ export function live(token, onMessage, onState = () => {}) {
   const schedule = () => {
     if (stopped) return;
     clearTimeout(retry);
-    retry = setTimeout(connect, delay);
+    retry = setTimeout(connect, jittered(delay));
     delay = Math.min(delay * 2, 60_000);
   };
   connect();
@@ -393,8 +401,13 @@ export async function pairSnapshot(code, stopped = never) {
   return r.json();
 }
 
-export async function pairSnapshotPart(code, n, stopped = never) {
-  const r = await pairCall(code, `/snapshot/${n}`, {}, stopped);
+/**
+ * Part [n] of the library. With [pageToken], the page's proof that the slot
+ * is its own, as on the DELETE: a relay that does not ask for it ignores it,
+ * and a later one may require it.
+ */
+export async function pairSnapshotPart(code, n, stopped = never, pageToken = null) {
+  const r = await pairCall(code, `/snapshot/${n}`, pageToken ? { headers: { authorization: `Bearer ${pageToken}` } } : {}, stopped);
   if (r.status === 410) throw new RelayError(PART_GONE, 410);
   if (!r.ok) throw new RelayError("Part of your library did not arrive.", r.status);
   return new Uint8Array(await r.arrayBuffer());

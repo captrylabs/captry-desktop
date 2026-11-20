@@ -102,7 +102,7 @@ export const INBOX_MAX_BYTES = 20 * 1024 * 1024;
  * Seals one item. `nonce` is for the test vector only; anything real gets a
  * fresh random one, which AES-GCM cannot do without.
  */
-export async function sealInbox(key, item, nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))) {
+export async function sealInbox(key, item, nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES)), computer = null) {
   const body = { format: INBOX_FORMAT, id: item.id, createdAt: item.createdAt };
   if (item.text) body.text = item.text;
   if (item.image) body.image = { mimeType: item.image.mimeType, data: toBase64(item.image.bytes) };
@@ -114,7 +114,9 @@ export async function sealInbox(key, item, nonce = crypto.getRandomValues(new Ui
   if (item.pinned) body.pinned = true;
   if (item.pinIn) body.pinIn = item.pinIn;
   if (item.private) body.private = true;
-  const plain = padded(new TextEncoder().encode(JSON.stringify(body)));
+  const legacy = padded(new TextEncoder().encode(JSON.stringify(body)));
+  // A computer paired with its own key seals it again with that key (sealInner).
+  const plain = computer ? await sealInner(computer, INNER_INBOX, legacy) : legacy;
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: INBOX_MAGIC, tagLength: TAG_BITS }, key, plain),
   );
@@ -178,19 +180,251 @@ export async function sealFeed(key, plain, nonce = crypto.getRandomValues(new Ui
   return out;
 }
 
-/** The batch of changes in an entry, or null when it is not one or the key does not fit. */
-export async function openFeed(key, bytes) {
-  if (bytes.length < FEED_MAGIC.length + NONCE_BYTES + 16) return null;
+async function openFeedPlain(key, bytes) {
+  if (!bytes || bytes.length < FEED_MAGIC.length + NONCE_BYTES + 16) return null;
   if (!FEED_MAGIC.every((b, i) => bytes[i] === b)) return null;
   try {
-    const plain = await crypto.subtle.decrypt(
+    return new Uint8Array(await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: bytes.subarray(FEED_MAGIC.length, FEED_MAGIC.length + NONCE_BYTES), additionalData: FEED_MAGIC, tagLength: TAG_BITS },
       key,
       bytes.subarray(FEED_MAGIC.length + NONCE_BYTES),
-    );
+    ));
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * The batch of changes in an entry, or null when it is not one or the key
+ * does not fit. With [computer] (a pairing with its own key, computerKeys),
+ * only an entry the phone signed for this generation opens (openSignedFeed),
+ * and one that opened with the key but was not taken leaves the generation it
+ * named in [refused].g; without, any entry sealed with the key does, as before.
+ */
+export async function openFeed(key, bytes, computer = null, refused = {}) {
+  const plain = await openFeedPlain(key, bytes);
+  if (!plain) return null;
+  if (computer) return openSignedFeed(plain, computer, refused);
+  try {
     const body = JSON.parse(new TextDecoder().decode(plain));
     if (body.format !== 1 || !Array.isArray(body.changes)) return null;
     return body;
+  } catch (e) {
+    return null;
+  }
+}
+
+// --- signed by the phone ----------------------------------------------------------------
+//
+// Every computer holds the desktop key, so any of them could seal an entry or
+// a library part. For a pairing with its own key the phone signs each one
+// (ECDSA P-256, the private half in its Keystore), over the fields the page
+// uses and the exact bytes of the changes:
+//
+//   {"format":1,"at":A,"n":N,"g":G,"sig":"S","changes":<CHANGES>}
+//   feed:  "captry feed v1\n" G "\n" N "\n" A "\n" | CHANGES
+//   part:  "captry part v1\n" G "\n" P "\n" I "\n" T "\n" N "\n" A "\n" | CHANGES
+//
+// N is "" when the entry has none. "changes" is always last, and the page
+// splits there and parses the two halves apart, so what was checked is what
+// is used: a parse of the whole could take a second "changes" the signature
+// never covered.
+
+const SPLIT = new TextEncoder().encode(',"changes":');
+
+/**
+ * [plain], a signed entry or part, as { head, changes, changesBytes }, or
+ * null: the padding off, ending in "}", head the text up to the first
+ * ,"changes": with "}" after it, and CHANGES what is between that and the end.
+ */
+export function splitSigned(plain) {
+  let end = plain.length;
+  while (end > 0 && plain[end - 1] === 0x20) end--;
+  if (end < 2 || plain[end - 1] !== 0x7d) return null;
+  let at = -1;
+  search: for (let i = 0; i + SPLIT.length <= end - 1; i++) {
+    for (let j = 0; j < SPLIT.length; j++) if (plain[i + j] !== SPLIT[j]) continue search;
+    at = i;
+    break;
+  }
+  if (at < 0) return null;
+  const headBytes = new Uint8Array(at + 1);
+  headBytes.set(plain.subarray(0, at));
+  headBytes[at] = 0x7d;
+  const changesBytes = plain.slice(at + SPLIT.length, end - 1);
+  let head;
+  let changes;
+  try {
+    // Bytes that are not UTF-8 are refused, not mended: the signature is over the bytes.
+    const strict = new TextDecoder("utf-8", { fatal: true });
+    head = JSON.parse(strict.decode(headBytes));
+    changes = JSON.parse(strict.decode(changesBytes));
+  } catch (e) {
+    return null;
+  }
+  if (!head || typeof head !== "object" || Array.isArray(head) || !Array.isArray(changes)) return null;
+  return { head, changes, changesBytes };
+}
+
+async function signedBy(verify, prefix, changesBytes, sig) {
+  // 64 bytes, r | s, as WebCrypto checks it.
+  if (typeof sig !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(sig)) return false;
+  const head = new TextEncoder().encode(prefix);
+  const message = new Uint8Array(head.length + changesBytes.length);
+  message.set(head, 0);
+  message.set(changesBytes, head.length);
+  try {
+    return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, verify, base64(sig), message);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** A feed entry the phone signed for [computer]'s generation, as openFeed returns it, or null. */
+export async function openSignedFeed(plain, computer, refused = {}) {
+  const split = splitSigned(plain);
+  if (!split) return null;
+  const { head, changes } = split;
+  const n = head.n;
+  // Opened with K and not taken: what generation it says it is for, so the
+  // page can tell the phone's word it cannot check from another computer's.
+  refused.g = Number.isSafeInteger(head.g) ? head.g : null;
+  if (head.format !== 1 || head.g !== computer.g || !Number.isSafeInteger(head.at) || (n !== undefined && !counter(n))) return null;
+  if (!(await signedBy(computer.verify, `captry feed v1\n${head.g}\n${n ?? ""}\n${head.at}\n`, split.changesBytes, head.sig))) return null;
+  delete refused.g;
+  // Built from the checked fields alone.
+  const body = { format: 1, at: head.at, changes };
+  if (n !== undefined) body.n = n;
+  return body;
+}
+
+/**
+ * A part of the library sent at pairing: as openFeed for a phone without
+ * computer keys ([computer] null), else only one the phone signed for this
+ * pairing (`pair`) and generation.
+ */
+export async function openSnapshotPart(key, bytes, computer = null) {
+  if (!computer) return openFeed(key, bytes);
+  const plain = await openFeedPlain(key, bytes);
+  const split = plain && splitSigned(plain);
+  if (!split) return null;
+  const { head, changes } = split;
+  const n = head.n;
+  if (head.format !== 1 || head.g !== computer.g || !Number.isSafeInteger(head.at) || typeof head.pair !== "string" ||
+    !counter(head.part) || !counter(head.parts) || (n !== undefined && !counter(n))) return null;
+  const prefix = `captry part v1\n${head.g}\n${head.pair}\n${head.part}\n${head.parts}\n${n ?? ""}\n${head.at}\n`;
+  if (!(await signedBy(computer.verify, prefix, split.changesBytes, head.sig))) return null;
+  const body = { format: 1, at: head.at, part: head.part, parts: head.parts, pair: head.pair, changes };
+  if (n !== undefined) body.n = n;
+  // `took` is not signed, so it is not read: every phone with computer keys
+  // names what it takes, and a computer holding K could otherwise turn it off.
+  body.took = true;
+  return body;
+}
+
+// --- this computer's own key ------------------------------------------------------------
+//
+// CK, from the key message (pair.js keyMessage), is never kept as bytes:
+//   EK = HMAC-SHA256(CK, "captry computer envelope v1")   opens the new key when the phone moves
+//   SK = HMAC-SHA256(CK, "captry computer send v1")       seals what this computer sends
+// each a non-extractable WebCrypto key that can do only that one thing.
+
+/**
+ * { cid, g, ek, sk, verify } for a pairing with its own key, from the key
+ * message's { ck, g, cid, spki }. CK and every derived byte are zeroed.
+ */
+export async function computerKeys({ ck, g, cid, spki }) {
+  let ek = null;
+  let sk = null;
+  try {
+    const mac = await crypto.subtle.importKey("raw", ck, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    ek = new Uint8Array(await crypto.subtle.sign("HMAC", mac, new TextEncoder().encode("captry computer envelope v1")));
+    sk = new Uint8Array(await crypto.subtle.sign("HMAC", mac, new TextEncoder().encode("captry computer send v1")));
+    return {
+      cid,
+      g,
+      ek: await crypto.subtle.importKey("raw", ek, "AES-GCM", false, ["decrypt"]),
+      sk: await crypto.subtle.importKey("raw", sk, "AES-GCM", false, ["encrypt"]),
+      verify: await crypto.subtle.importKey("spki", spki, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]),
+    };
+  } finally {
+    ck.fill(0);
+    ek?.fill(0);
+    sk?.fill(0);
+  }
+}
+
+// What a computer with its own key sends is sealed twice: inside the usual
+// sealing with K, which every computer holds, the legacy plaintext is sealed
+// with SK, which only this computer and the phone can make. So no other
+// computer, a removed one included, can read it or pass for this one:
+//
+//   INNER = 0x02 | cid (16) | g (4, big-endian) | nonce (12) | AES-GCM(SK, plaintext, aad)
+//   aad   = "CPTRYIT2" | kind | cid | g (4, big-endian), kind 'i' for a capture, 'c' for an edit
+//
+// INNER is not padded again: the plaintext inside already is.
+
+export const INNER_INBOX = 0x69;
+export const INNER_CHANGE = 0x63;
+const INNER_MAGIC = new TextEncoder().encode("CPTRYIT2");
+
+function innerHead(prefix, kind, cid, g) {
+  const id = new TextEncoder().encode(cid);
+  const out = new Uint8Array(prefix.length + (kind === null ? 0 : 1) + id.length + 4);
+  out.set(prefix, 0);
+  let at = prefix.length;
+  if (kind !== null) out[at++] = kind;
+  out.set(id, at);
+  new DataView(out.buffer).setUint32(at + id.length, g);
+  return out;
+}
+
+/** [plain], the legacy plaintext (padded), as INNER for [computer]; [kind] is INNER_INBOX or INNER_CHANGE. */
+export async function sealInner(computer, kind, plain, nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))) {
+  const aad = innerHead(INNER_MAGIC, kind, computer.cid, computer.g);
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: aad, tagLength: TAG_BITS }, computer.sk, plain));
+  const head = innerHead(new Uint8Array([2]), null, computer.cid, computer.g);
+  const out = new Uint8Array(head.length + NONCE_BYTES + sealed.length);
+  out.set(head, 0);
+  out.set(nonce, head.length);
+  out.set(sealed, head.length + NONCE_BYTES);
+  return out;
+}
+
+const MOVE_MAGIC = new TextEncoder().encode("CPTRYMV1");
+
+/** The additional data a move's envelope for [cid] at [g] is sealed with: "CPTRYMV1" | cid | g, 4 bytes big-endian. */
+export function moveAad(cid, g) {
+  const id = new TextEncoder().encode(cid);
+  const out = new Uint8Array(MOVE_MAGIC.length + id.length + 4);
+  out.set(MOVE_MAGIC, 0);
+  out.set(id, MOVE_MAGIC.length);
+  new DataView(out.buffer).setUint32(MOVE_MAGIC.length + id.length, g);
+  return out;
+}
+
+/**
+ * The new desktop key in a "moved" note's envelope for this computer, [k]
+ * (base64 of nonce | AES-GCM(EK, K_new, moveAad)), as 32 bytes, or null.
+ */
+export async function openMoveEnvelope(ek, cid, g, k) {
+  if (typeof k !== "string" || !Number.isSafeInteger(g) || g < 1 || g > 0xffffffff) return null;
+  let bytes;
+  try {
+    bytes = base64(k);
+  } catch (e) {
+    return null;
+  }
+  if (bytes.length !== NONCE_BYTES + 32 + 16) return null;
+  try {
+    const raw = new Uint8Array(await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bytes.subarray(0, NONCE_BYTES), additionalData: moveAad(cid, g), tagLength: TAG_BITS },
+      ek,
+      bytes.subarray(NONCE_BYTES),
+    ));
+    if (raw.length === 32) return raw;
+    raw.fill(0);
+    return null;
   } catch (e) {
     return null;
   }
@@ -342,8 +576,9 @@ export function snapshotSaysTook(seen) {
 
 export const CHANGE_MAGIC = new Uint8Array([0x43, 0x50, 0x54, 0x52, 0x59, 0x43, 0x48, 1]); // CPTRYCH\1
 
-export async function sealChange(key, change, nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES))) {
-  const plain = padded(new TextEncoder().encode(typeof change === "string" ? change : JSON.stringify(change)));
+export async function sealChange(key, change, nonce = crypto.getRandomValues(new Uint8Array(NONCE_BYTES)), computer = null) {
+  const legacy = padded(new TextEncoder().encode(typeof change === "string" ? change : JSON.stringify(change)));
+  const plain = computer ? await sealInner(computer, INNER_CHANGE, legacy) : legacy;
   const sealed = new Uint8Array(
     await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: CHANGE_MAGIC, tagLength: TAG_BITS }, key, plain),
   );

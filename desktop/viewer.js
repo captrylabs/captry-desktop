@@ -10,7 +10,7 @@
 // DOM in it, and keeping in step with the phone in sync.js, likewise. This
 // file is only the page.
 
-import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=87";
+import { sealInbox, INBOX_MAX_BYTES, relayTokenFrom, openFeed, openSnapshotPart, computerKeys, snapshotStatus, snapshotPartFits, snapshotArrived, decodeCapture, sealChange, sealCache, openCache, importContentKey, decodeManifest, toBase64 } from "./library-format.js?v=88";
 import {
   FILTERS,
   RANGES,
@@ -30,15 +30,15 @@ import {
   describeRule,
   searchWords,
   own,
-} from "./library.js?v=87";
-import * as lines from "./list-lines.js?v=87";
-import * as markup from "./note-markup.js?v=87";
-import { noteEditor } from "./note-editor.js?v=87";
-import * as store from "./store.js?v=87";
-import * as relay from "./relay.js?v=87";
-import * as pair from "./pair.js?v=87";
-import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=87";
-import { createSync, pairedStart, cachedFeed, storedIsThis, safeMime, fromBase64 } from "./sync.js?v=87";
+} from "./library.js?v=88";
+import * as lines from "./list-lines.js?v=88";
+import * as markup from "./note-markup.js?v=88";
+import { noteEditor } from "./note-editor.js?v=88";
+import * as store from "./store.js?v=88";
+import * as relay from "./relay.js?v=88";
+import * as pair from "./pair.js?v=88";
+import { qrModules, qrDotsPath, qrFinderPath } from "./qr.js?v=88";
+import { createSync, pairedStart, cachedFeed, storedIsThis, safeMime, fromBase64 } from "./sync.js?v=88";
 
 const PAGE = 150;
 /** The longest note the phone takes from here (DesktopChanges.MAX_TEXT). */
@@ -409,8 +409,14 @@ async function startPairing() {
         phoneLabel = friendlyPhone(answer.label) || phoneLabel;
       }
     }
-    const relayToken = await relayTokenFrom(raw);
-    const key = await importContentKey(raw);
+    // The desktop key alone (a phone from before computer keys), or with this
+    // computer's own key: then everything the phone sends is signed, and
+    // everything sent from here is sealed again with its own key.
+    const message = pair.keyMessage(raw);
+    if (!message) throw new relay.RelayError("Pairing did not complete. Start again.", 0);
+    const relayToken = await relayTokenFrom(message.key);
+    const key = await importContentKey(message.key);
+    const computer = message.computer ? await computerKeys(message.computer) : null;
 
     pairEl.panel.dataset.stage = "receive";
     pairEl.progress.hidden = false;
@@ -435,7 +441,9 @@ async function startPairing() {
     const parts = {};
     for (let i = 0; i < status.total; i++) {
       if (session.cancelled) return;
-      const body = await openFeed(key, await relay.pairSnapshotPart(code, i, stopped));
+      const body = await openSnapshotPart(key, await relay.pairSnapshotPart(code, i, stopped, session.pageToken), computer);
+      // With computer keys, a part the phone did not sign is one it did not send.
+      if (!body && computer) throw new relay.RelayError("Part of your library did not arrive. Pair again.", 0);
       if (!body) throw new relay.RelayError("Part of your library could not be opened. Pair again.", 0);
       // A part out of place, missing or from another library: not what the phone sent.
       // Sent for this pairing: the proof is this pairing's alone.
@@ -485,10 +493,11 @@ async function startPairing() {
       ephemeral: session.ephemeral,
       phoneSaysTook: start.phoneSaysTook,
     };
+    if (computer) opened.computer = computer;
     sync.feed = start.feed;
     // Not remembered: nothing about this pairing is written to the browser,
     // so closing the tab is the end of it on this computer.
-    if (!session.ephemeral) await store.remember(place, key, relayToken);
+    if (!session.ephemeral) await store.remember(place, key, relayToken, computer ? { computer } : {});
     // Kept: those this key opens are still on their way (the same phone
     // paired again); those it does not were another pairing's and are
     // dropped, as on any load. Not kept: the remembered pairing's are left
@@ -534,11 +543,11 @@ const requestedFull = new Set();
 
 /** Asks the phone, once, for the full-size copy of a picture. */
 async function requestFull(c, name) {
-  if (requestedFull.has(name) || !opened?.relayToken || !opened.key || opened.paused) return;
+  if (requestedFull.has(name) || !opened?.relayToken || !opened.key || opened.paused || opened.stale) return;
   requestedFull.add(name);
   try {
     const change = { format: 1, id: crypto.randomUUID(), at: Date.now(), capture: c.id, ops: [{ op: "want", file: name }] };
-    await relay.send(opened.relayToken, await sealChange(opened.key, change));
+    await relay.send(opened.relayToken, await sealChange(opened.key, change, undefined, opened.computer ?? null));
   } catch (e) {
     requestedFull.delete(name);
   }
@@ -558,12 +567,18 @@ async function offerRemembered({ auto = true } = {}) {
   }
   el.again.hidden = false;
   el.againName.textContent = friendlyPhone(saved.name) || "your phone";
-  sync.sentItems = await sync.loadSent(saved.key);
-  el.againOpen.onclick = () => openRemembered(saved);
-  if (auto) await openRemembered(saved);
+  sync.sentItems = await sync.loadSent(saved.key, saved.oldKey ?? null, saved);
+  el.againOpen.onclick = () => openRemembered();
+  if (auto) await openRemembered();
 }
 
-async function openRemembered(saved) {
+async function openRemembered() {
+  // What is kept now: another tab may have moved it to a new key since.
+  const saved = await store.recall();
+  if (!saved?.key || saved.kind !== "paired") {
+    el.again.hidden = true;
+    return;
+  }
   if (!opened) showSkeleton();
   if (await openFromCache(saved)) return;
   if (!opened) hideSkeleton();
@@ -572,11 +587,12 @@ async function openRemembered(saved) {
 
 el.againForget.addEventListener("click", async () => {
   // Tabs showing the pairing kept here close with it; others stay as they are.
-  const token = await tokenHash((await store.recall())?.relayToken);
+  const saved = await store.recall();
+  const token = await tokenHash(saved?.relayToken);
   await store.forget();
   sync.sentItems = [];
   el.again.hidden = true;
-  tellOtherTabs(token);
+  tellOtherTabs(token, saved?.computer?.cid);
   say("Forgotten on this computer.");
 });
 
@@ -693,8 +709,8 @@ function closeOpened() {
   Object.assign(state, { view: { kind: "captures" }, query: "", source: "", selectedId: null });
 }
 
-/** The phone reset its key: forget this computer's copy and offer pairing. */
-async function unpairedHere(oldToken) {
+/** The phone reset its key, or removed this computer: forget this computer's copy and offer pairing. */
+async function unpairedHere(oldToken, message = "Your phone reset its key. Pair again to keep using Captry here.") {
   closeOpened();
   el.app.hidden = true;
   el.opener.hidden = false;
@@ -708,7 +724,7 @@ async function unpairedHere(oldToken) {
     sync.sentItems = [];
   }
   await offerRemembered({ auto: false });
-  say("Your phone reset its key. Pair again to keep using Captry here.", "warn");
+  say(message, "warn");
 }
 
 // Unlinking forgets the pairing here: the library, its key and anything
@@ -732,6 +748,7 @@ el.close.addEventListener("click", () => {
 unlinkDialog.addEventListener("close", async () => {
   if (unlinkDialog.returnValue !== "unlink") return;
   const relayToken = opened?.relayToken ?? null;
+  const cid = opened?.computer?.cid ?? null;
   const token = await tokenHash(relayToken);
   closeOpened();
   el.app.hidden = true;
@@ -743,7 +760,9 @@ unlinkDialog.addEventListener("close", async () => {
   // What this computer keeps is forgotten only when it is this pairing: a tab
   // not remembered, or one left over from before another pairing was kept,
   // leaves that other pairing and its draft alone.
-  if (storedIsThis(await store.recall(), relayToken)) {
+  // The same computer kept at a newer key (another tab followed the phone) is this pairing too.
+  const kept = await store.recall();
+  if (storedIsThis(kept, relayToken) || (!!cid && kept?.computer?.cid === cid)) {
     await store.forget();
     sync.sentItems = [];
     el.again.hidden = true;
@@ -751,7 +770,7 @@ unlinkDialog.addEventListener("close", async () => {
     store.dropWrites();
     await offerRemembered({ auto: false });
   }
-  tellOtherTabs(token);
+  tellOtherTabs(token, cid);
   say("Unlinked. Pair again to use Captry here.", "warn");
 });
 
@@ -768,16 +787,27 @@ const tabs = (() => {
   }
 })();
 
-function tellOtherTabs(token) {
+function tellOtherTabs(token, cid = null) {
   try {
-    tabs?.postMessage({ type: "unlinked", token });
+    // The computer's id too: a tab not yet moved to the phone's new key has
+    // another token, and is the same pairing all the same.
+    tabs?.postMessage({ type: "unlinked", token, cid: cid ?? null });
   } catch (e) {}
 }
+
+// A tab that moved to the phone's new key says so; another tab still on the
+// old mailbox reads it now, gets to the same note and follows by itself,
+// with its own edits. What it keeps never goes back to the old key: the
+// kept pairing holds the newer generation (pair.keepsNewer).
+tabs?.addEventListener("message", async (event) => {
+  if (event.data?.type !== "moved" || !opened?.computer) return;
+  if (event.data.token === (await tokenHash(opened.relayToken))) sync.syncFeed();
+});
 
 tabs?.addEventListener("message", async (event) => {
   if (event.data?.type !== "unlinked") return;
   const mine = opened ? await tokenHash(opened.relayToken) : undefined;
-  const closing = !!opened && event.data.token === mine;
+  const closing = !!opened && (event.data.token === mine || (!!event.data.cid && event.data.cid === opened.computer?.cid));
   if (closing) {
     if (unlinkDialog.open) unlinkDialog.close();
     closeOpened();
@@ -1159,8 +1189,9 @@ async function saveDraft() {
     note: el.composeNoteInput.value,
   };
   const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(draft)));
-  // Unlinked meanwhile: nothing goes back into the storage just cleared.
-  if (opened?.key !== key || !(await sync.keptHere(target))) return;
+  // Unlinked meanwhile: nothing goes back into the storage just cleared. The
+  // key last: one sealed before a move to a new key is not written.
+  if (!(await sync.keptHere(target)) || opened?.key !== key) return;
   await store.saveDraft(sealed);
 }
 
@@ -1172,11 +1203,20 @@ async function dropDraft() {
   if (await sync.keptHere(opened)) store.saveDraft(null);
 }
 
+/**
+ * [sealed], kept in this browser for [target], opened: with its key, or
+ * while a move to a new key is being finished, with the old one.
+ */
+async function openKept(target, sealed) {
+  const old = target.oldKey;
+  return (await openCache(target.key, sealed)) ?? (old ? await openCache(old, sealed) : null);
+}
+
 /** Puts a kept draft back into New capture, without opening it. */
 async function restoreDraft() {
   const key = opened?.key;
   if (!key || opened.ephemeral || composeHasContent()) return;
-  const bytes = await openCache(key, await store.loadDraft());
+  const bytes = await openKept(opened, await store.loadDraft());
   if (!bytes) return;
   try {
     const d = JSON.parse(new TextDecoder().decode(bytes));
@@ -1271,8 +1311,8 @@ el.compose.addEventListener("submit", async (event) => {
     return;
   }
   // Paused while this was open: the words stay, as a draft.
-  if (opened.paused) {
-    toast(PAUSED);
+  if (opened.paused || opened.stale) {
+    toast(opened.stale ? STALE : PAUSED);
     return;
   }
   const choices = composeChoices();
@@ -1284,9 +1324,11 @@ el.compose.addEventListener("submit", async (event) => {
   el.composeSave.disabled = true;
   try {
     const item = { id: crypto.randomUUID(), createdAt: Date.now(), text: text || null, image: composeImage ? { mimeType: composeImage.mimeType, bytes: composeImage.bytes } : null, ...choices };
+    // The key it is sealed with, by generation: one moved past meanwhile is sent again (sync.resendStale).
+    const computer = opened.computer ?? null;
     let relayId;
     try {
-      relayId = await relay.send(opened.relayToken, await sealInbox(opened.key, item));
+      relayId = await relay.send(opened.relayToken, await sealInbox(opened.key, item, undefined, computer));
     } catch (e) {
       // Nothing was sent: the dialog stays open with the words in it.
       toast(e.message ?? "That capture could not be sent. Try again.");
@@ -1304,6 +1346,7 @@ el.compose.addEventListener("submit", async (event) => {
       imageHash: composeImage ? await sha256Hex(composeImage.bytes) : null,
       ...choices,
     };
+    if (computer) record.g = computer.g;
     // Kept with the captures sent, already on the phone if it said so meanwhile.
     await sync.keepSent(record);
     resetCompose();
@@ -1335,7 +1378,8 @@ const DELIVERY_MS = 8_000;
 function watchDelivery(delay = DELIVERY_MS) {
   clearTimeout(deliveryTimer);
   const out = () => opened?.relayToken &&
-    (sync.sentItems.some(relay.sentOut) || [...pendingEdits.values()].some((e) => !e.collected));
+    // An edit sent before a move is out until it is sent again.
+    (sync.sentItems.some(relay.sentOut) || [...pendingEdits.values()].some((e) => !e.collected || e.g < (opened.computer?.g ?? 0)));
   if (!out()) return;
   deliveryTimer = setTimeout(async () => {
     if (document.visibilityState === "visible" && out()) {
@@ -1392,14 +1436,47 @@ const sync = createSync({
     updateSync();
     toast(paused ? PAUSED : "Syncing with your phone again");
   },
-  changesLost() {
-    toast("Some of your phone's changes are older than two weeks and were not kept. Pair again to see everything.");
+  changesLost(kind) {
+    toast(kind === "trimmed"
+      ? "Some of your phone's changes did not reach this computer. Pair again to keep syncing."
+      : "Some of your phone's changes are older than two weeks and were not kept. Pair again to see everything.");
   },
-  unpaired: unpairedHere,
+  unpaired: (relayToken) => unpairedHere(relayToken),
+  removed: (relayToken) => unpairedHere(relayToken, "This computer was removed. Pair again to use Captry here."),
+  moved(oldToken) {
+    // Silent: the same library, through the phone's new mailbox.
+    requestedFull.clear();
+    connectLive();
+    watchDelivery(0);
+    tokenHash(oldToken).then((token) => {
+      try {
+        tabs?.postMessage({ type: "moved", token });
+      } catch (e) {}
+    });
+  },
+  libraryRecord,
+  staleChanged() {
+    updateSync();
+  },
+  unansweredEdits: () => [...pendingEdits.values()],
+  // One tab at a time moves what this browser keeps. Without locks, or when
+  // the request fails before the work starts, the work runs all the same.
+  exclusive(work) {
+    if (!navigator.locks) return work();
+    let started = false;
+    return navigator.locks.request("captry-desktop-move", () => {
+      started = true;
+      return work();
+    }).catch((e) => {
+      if (started) throw e;
+      return work();
+    });
+  },
   settleEdit,
   editsOver,
   editsCollected(still) {
-    for (const edit of pendingEdits.values()) if (!edit.collected && !still.has(edit.relayId)) edit.collected = true;
+    // One sent before a move is waiting to go to the new mailbox, not collected.
+    for (const edit of pendingEdits.values()) if (!edit.collected && edit.g === opened?.computer?.g && !still.has(edit.relayId)) edit.collected = true;
   },
   forgetPictureUrl(name) {
     const old = fileUrls.get(name);
@@ -1415,6 +1492,11 @@ const sync = createSync({
 // page stops sending captures and edits until it says Pro is back.
 
 const PAUSED = "Sync is paused. Captry Pro ended on your phone.";
+
+// The phone's changes were dropped past this computer's place with nothing
+// after them: it may have moved on to a new key without this computer
+// (sync.js). Nothing is sent until it is paired again, or its next word comes.
+const STALE = "Pair again to keep syncing.";
 
 /**
  * For a copy of a capture the phone sent (sync.applyChanges): true when it
@@ -2173,8 +2255,8 @@ function openEditor(c, field) {
 /** True once the relay has taken the change. */
 async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = false } = {}) {
   if (!opened) return false;
-  if (opened.paused) {
-    toast(PAUSED);
+  if (opened.paused || opened.stale) {
+    toast(opened.stale ? STALE : PAUSED);
     return false;
   }
   const target = opened;
@@ -2191,9 +2273,10 @@ async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = fal
   }
   // Quiet: no message (a list's tick is not worth one), drawn again only if asked.
   if (!quiet || redrawNow) redraw();
+  const computer = opened.computer ?? null;
   let relayId;
   try {
-    relayId = await relay.send(opened.relayToken, await sealChange(opened.key, change));
+    relayId = await relay.send(opened.relayToken, await sealChange(opened.key, change, undefined, computer));
   } catch (e) {
     // The library was closed meanwhile: nothing of it to put back or say.
     if (opened !== target) return false;
@@ -2206,7 +2289,9 @@ async function sendChange(c, ops, { quiet = false, undo = false, redrawNow = fal
     return false;
   }
   if (opened !== target) return false;
-  pendingEdits.set(change.id, { relayId, captureId: c.id, before, ops, at: change.at, collected: false });
+  pendingEdits.set(change.id, { id: change.id, relayId, captureId: c.id, before, ops, at: change.at, collected: false, ...(computer ? { g: computer.g } : {}) });
+  // Sealed for the key before a move that came while it was being sent.
+  if (computer && computer !== opened.computer) sync.resendStale();
   watchDelivery();
   updateSync();
   if (quiet) return true;
@@ -2438,31 +2523,46 @@ let persistTimer = 0;
 
 function persistLibrary() {
   clearTimeout(persistTimer);
-  persistTimer = setTimeout(async () => {
-    const target = opened;
-    if (!target?.key || !target.place || target.ephemeral) return;
-    const captures = target.manifest.captures
-      .filter((c) => !c.sent)
-      .map((c) => {
-        const copy = { ...c };
-        delete copy._hay;
-        delete copy.pendingEdit;
-        return copy;
-      });
-    const payload = {
-      v: 1,
-      name: target.name,
-      smartCollections: target.manifest.smartCollections,
-      captures,
-      feed: { seq: sync.feed.seq, since: sync.feed.since, n: sync.feed.n },
-      thumbs: [...thumbOnly],
-      paused: !!target.paused,
-      phoneSaysTook: !!target.phoneSaysTook,
-    };
-    const sealed = await sealCache(target.key, new TextEncoder().encode(JSON.stringify(payload)));
-    if (opened !== target || !(await sync.keptHere(target))) return;
-    await store.saveLibrary({ name: target.name, placeKind: target.place.kind, sealed, savedAt: Date.now(), paused: !!target.paused });
-  }, 1500);
+  persistTimer = setTimeout(writeLibrary, 1500);
+}
+
+/** Keeps the library now; resolves once it is written, or is not to be. */
+async function writeLibrary() {
+  clearTimeout(persistTimer);
+  const target = opened;
+  const key = target?.key;
+  const record = await libraryRecord(target);
+  // The key last: sealed before a move to a new one, it is not written.
+  if (!record || opened !== target || !(await sync.keptHere(target)) || target.key !== key) return;
+  await store.saveLibrary(record);
+}
+
+/** [target]'s library as the store keeps it, sealed with its key now; null for one not kept. */
+async function libraryRecord(target) {
+  const key = target?.key;
+  if (!key || !target.place || target.ephemeral) return null;
+  const captures = target.manifest.captures
+    .filter((c) => !c.sent)
+    .map((c) => {
+      const copy = { ...c };
+      delete copy._hay;
+      delete copy.pendingEdit;
+      return copy;
+    });
+  const payload = {
+    v: 1,
+    name: target.name,
+    smartCollections: target.manifest.smartCollections,
+    captures,
+    feed: { seq: sync.feed.seq, since: sync.feed.since, n: sync.feed.n, ...(Number.isFinite(sync.feed.refusedFrom) ? { refusedFrom: sync.feed.refusedFrom } : {}), ...(Number.isFinite(sync.feed.heardAt) ? { heardAt: sync.feed.heardAt } : {}) },
+    thumbs: [...thumbOnly],
+    paused: !!target.paused,
+    phoneSaysTook: !!target.phoneSaysTook,
+    // true, or "refused" (sync.js afterLook), which a look reaching the end clears.
+    stale: target.stale || false,
+  };
+  const sealed = await sealCache(key, new TextEncoder().encode(JSON.stringify(payload)));
+  return { name: target.name, placeKind: target.place.kind, sealed, savedAt: Date.now(), paused: !!target.paused };
 }
 
 /** Shows the kept library at once, if there is one that fits. True when it did. */
@@ -2472,7 +2572,11 @@ async function openFromCache(saved) {
   // Older than the relay keeps the phone's changes: pair again. Not while
   // paused: the phone sent nothing to miss, and what is here stays readable.
   if (!record.paused && Date.now() - record.savedAt > 13 * 24 * 60 * 60_000) return false;
-  const plain = await openCache(saved.key, record.sealed);
+  // A move a reload cut short: a library only the old key opens was kept
+  // before the move, at the old mailbox's place (sync.js keepMoved).
+  let plain = await openCache(saved.key, record.sealed);
+  const beforeMove = !plain && !!saved.oldKey;
+  if (beforeMove) plain = await openCache(saved.oldKey, record.sealed);
   if (!plain) return false;
   let payload;
   try {
@@ -2496,10 +2600,16 @@ async function openFromCache(saved) {
     paused: !!payload.paused,
     phoneSaysTook: !!payload.phoneSaysTook,
   };
-  sync.feed = cachedFeed(payload.feed);
-  sync.sentItems = await sync.loadSent(saved.key);
+  if (saved.computer) opened.computer = saved.computer;
+  if (saved.computer && payload.stale) opened.stale = payload.stale === "refused" ? "refused" : true;
+  if (saved.computer && saved.oldKey) opened.oldKey = saved.oldKey;
+  sync.feed = cachedFeed(payload.feed, { beforeMove });
+  sync.sentItems = await sync.loadSent(saved.key, saved.oldKey ?? null, saved);
   await sync.settleSent();
   showOpened(null);
+  // Everything still sealed with the old key is sealed again, and what the
+  // phone had not confirmed goes to the new mailbox.
+  sync.finishMove().catch((e) => console.warn("Captry: the move to the new key is not finished", e));
   return true;
 }
 
@@ -3443,7 +3553,9 @@ function updateSync() {
   const changes = waiting === 1 ? "1 change" : `${waiting} changes`;
   // Short words for the pill; the whole sentence for its menu.
   let state, short, full, detail;
-  if (opened.paused) {
+  if (opened.stale) {
+    [state, short, full, detail] = ["stuck", "Pair again", "Not syncing", STALE];
+  } else if (opened.paused) {
     [state, short, full, detail] = ["stuck", "Paused", "Sync is paused",
       "Captry Pro ended on your phone. Turn it back on there to sync again."];
   } else if (!navigator.onLine) {
@@ -4288,7 +4400,7 @@ async function fileUrl(f) {
   }
   const target = opened;
   if (!target) return null;
-  const bytes = target.key ? await openCache(target.key, await store.loadImage(f.file)) : null;
+  const bytes = target.key ? await openKept(target, await store.loadImage(f.file)) : null;
   if (!bytes || opened !== target) return null;
   const blob = new Blob([bytes], { type: safeMime(f.mimeType) });
   const url = URL.createObjectURL(blob);

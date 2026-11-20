@@ -2,6 +2,35 @@
   "about": "SHA-256 of each release of captry.app/desktop/. The index hash covers the page: index.html pins every script it loads by its SHA-384. Check it with: curl -s https://captry.app/desktop/ | shasum -a 256",
   "releases": [
     {
+      "release": 88,
+      "date": "2026-11-20",
+      "index": "0fb8b5c8303a5cb76d67205d3ca33cd667832bc36c8aa6bd9ddc55b34b58bd08",
+      "files": {
+        "library-format.js": "25bf6d84418392541f4fa1813b18695c847f157e11529ad72676f4b278ccbb04",
+        "library.js": "7be16786cc8352ae51da60eea4515d9efae1a32b1cd167cfff568288c01efd6f",
+        "list-lines.js": "a9635043bd16a8a81bb451165ec7d20c15174d6cfc707ab16cb9ba7c0d83e389",
+        "note-editor.js": "ea819274994dadc2846a5b58006aab5b6b596591fae09fc6a6c3d72f6d1a880a",
+        "note-markup.js": "a648456b27104d2dce6c79bd8ddd3e6410455def4a087457555ff112e20e30e9",
+        "pair.js": "bd5279ef949bd9b22b9e05be8c61a3e2f479a8c17c30ecedc06b98fc28998177",
+        "qr.js": "aae0dabc19268edd1f5bda26f50e4720d5a7cfcf4d1995401f522e7b11ca2326",
+        "relay.js": "b7fbf191b8a4bb69eb1648f96107d2bef391860126f55c234027b61368452945",
+        "store.js": "223dc259de56dbd836598a14fa979b87dba7d1dd788cfda2cd964d6b285c8367",
+        "sync.js": "a905eaf6d71006cff6c8d5035cd137dd4394c55b4ba8b2d27705c3a41b31a5ad",
+        "viewer.js": "286cfe4c93054a49cb3e1e125f87f5e66636cc8e6d2bf5f1db9f94211b6b3dfc",
+        "manifest.webmanifest": "5bbbf4eb793a7616a4400b16633ae20ba2caaa10e62abd8775568e6d5dbaf216"
+      },
+      "headers": {
+        "cache-control": "public, max-age=300, must-revalidate, no-transform",
+        "content-security-policy": "default-src 'none'; script-src 'self' 'sha256-Q0N8d6Omd3Qef+5INmkcBRBL1zW1FsKaVROocHh+//M='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        "cross-origin-opener-policy": "same-origin",
+        "permissions-policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        "referrer-policy": "strict-origin-when-cross-origin",
+        "x-content-type-options": "nosniff",
+        "x-frame-options": "DENY",
+        "x-robots-tag": "noindex"
+      }
+    },
+    {
       "release": 87,
       "date": "2026-11-18",
       "index": "1e7e56681b28a66410e3e05c941b9e4e46ba39b9b4266f142c0eefae52b9ce3d",

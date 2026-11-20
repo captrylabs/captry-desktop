@@ -86,9 +86,18 @@ export function splitAnswer(answer) {
   return { phoneKey, proof };
 }
 
-/** The content key the phone sent, or null if it does not open. */
+/**
+ * The key message the phone sent, or null if it does not open or is neither
+ * kind: 32 bytes, the desktop key alone (a phone from before computer keys),
+ * or KEY_MESSAGE_V2 bytes starting with 2 (keyMessage reads it).
+ */
 export async function openPairedKey(key, sealedB64) {
-  const bytes = unb64(sealedB64);
+  let bytes;
+  try {
+    bytes = unb64(sealedB64);
+  } catch (e) {
+    return null;
+  }
   if (bytes.length < 12 + 32 + 16) return null;
   try {
     const raw = new Uint8Array(await crypto.subtle.decrypt(
@@ -96,10 +105,49 @@ export async function openPairedKey(key, sealedB64) {
       key,
       bytes.subarray(12),
     ));
-    return raw.length === 32 ? raw : null;
+    if (raw.length === 32 || (raw.length === KEY_MESSAGE_V2 && raw[0] === 2)) return raw;
+    raw.fill(0);
+    return null;
   } catch (e) {
     return null;
   }
+}
+
+// A phone with computer keys sends more than the desktop key:
+//   0x02 | K(32) | CK(32) | g (4 bytes, big-endian) | cid (16 ASCII) | spki (91)
+// CK is this computer's own key (DesktopPairing.kt derives it from the content
+// key and cid), g the generation of K, spki the phone's signing key. The page
+// then needs signed feed entries, and seals what it sends again with a key made from CK.
+export const KEY_MESSAGE_V2 = 176;
+
+/**
+ * [bytes] (from openPairedKey) as { key, computer }: computer is null for the
+ * 32-byte message, else { ck, g, cid, spki }. Null for anything else. [bytes]
+ * is zeroed either way; the copies returned are the caller's to zero.
+ */
+export function keyMessage(bytes) {
+  try {
+    if (!(bytes instanceof Uint8Array)) return null;
+    if (bytes.length === 32) return { key: bytes.slice(), computer: null };
+    if (bytes.length !== KEY_MESSAGE_V2 || bytes[0] !== 2) return null;
+    const g = new DataView(bytes.buffer, bytes.byteOffset + 65, 4).getUint32(0);
+    const cid = String.fromCharCode(...bytes.subarray(69, 85));
+    if (g < 1 || !/^[A-Za-z0-9_-]{16}$/.test(cid)) return null;
+    return { key: bytes.slice(1, 33), computer: { ck: bytes.slice(33, 65), g, cid, spki: bytes.slice(85, 176) } };
+  } finally {
+    if (bytes instanceof Uint8Array) bytes.fill(0);
+  }
+}
+
+/**
+ * Whether [kept], the pairing this browser keeps, is a newer generation of
+ * the same computer than [record]: then [record] is an old key and is never
+ * written over it, whichever tab asks.
+ */
+export function keepsNewer(kept, record) {
+  const a = kept?.computer;
+  const b = record?.computer;
+  return !!a && !!b && a.cid === b.cid && Number.isSafeInteger(a.g) && a.g > b.g;
 }
 
 /** The phone's side of sealing, for tests: nonce | AES-GCM(key, content key). */

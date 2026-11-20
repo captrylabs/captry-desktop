@@ -1,6 +1,8 @@
 // What a paired computer keeps in the browser, in IndexedDB:
 //   place    the pairing: the phone's name, the content key as a
-//            non-extractable CryptoKey, and the relay token
+//            non-extractable CryptoKey, and the relay token; for a pairing
+//            with its own key, `computer` too (cid, g and its keys, each
+//            non-extractable), and `oldKey` while a move is being finished
 //   sent     captures sent from here that the library does not show yet,
 //            each sealed with that key (viewer.js saveSent)
 //   library  the library, sealed with that key, so a reload shows it at once
@@ -11,8 +13,13 @@
 // Every call is wrapped: a private window or blocked storage means the page
 // forgets, not that it breaks.
 
+import { keepsNewer } from "./pair.js?v=88";
+
 const DB = "captry-desktop";
-const VERSION = 2;
+// 3 since computer keys: a tab still running the page from before cannot
+// open a database at a newer version, so it can neither read a pairing it
+// does not understand nor wipe it. Nothing in the stores changed.
+const VERSION = 3;
 const PLACE = "place";
 const SENT = "sent";
 const LIBRARY = "library";
@@ -45,7 +52,8 @@ async function run(store, mode, work, asked = generation) {
     if (mode === "readwrite" && asked !== generation) return undefined;
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(store, mode);
-      const result = work(tx.objectStore(store));
+      // Several stores: the work gets the transaction itself.
+      const result = work(Array.isArray(store) ? tx : tx.objectStore(store));
       tx.oncomplete = () => resolve(result?.result);
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
@@ -64,9 +72,39 @@ async function safely(work, fallback) {
   }
 }
 
-/** Keeps the pairing: `place` is { kind: "paired", name }, with the key and token. */
-export function remember(place, key, relayToken = null) {
-  return safely(() => run(PLACE, "readwrite", (s) => s.put({ ...place, key, relayToken, savedAt: Date.now() }, "current")), false);
+/**
+ * Keeps the pairing: `place` is { kind: "paired", name }, with the key and
+ * token, and for a pairing with its own key [more].computer (its cid, g and
+ * keys, all non-extractable). Never over a newer generation of the same
+ * computer (keepsNewer), which another tab may have written.
+ */
+export function remember(place, key, relayToken = null, more = {}) {
+  const record = { ...place, ...more, key, relayToken, savedAt: Date.now() };
+  return updatePlace((kept) => (keepsNewer(kept, record) ? null : record));
+}
+
+/**
+ * Replaces the pairing kept with what [change] makes of it (null when there
+ * is none), or leaves it when [change] answers null. Read and written in one
+ * transaction, so nothing lands in between. With [library] (as saveLibrary
+ * takes it), that is written in the same transaction, and only with the
+ * pairing: a move keeps the new key and the library at the new mailbox
+ * together or neither. True when it wrote.
+ */
+export function updatePlace(change, library = null) {
+  return safely(() => run(library ? [PLACE, LIBRARY] : PLACE, "readwrite", (t) => {
+    const s = library ? t.objectStore(PLACE) : t;
+    const out = { result: false };
+    const get = s.get("current");
+    get.onsuccess = () => {
+      const next = change(get.result ?? null);
+      if (!next) return;
+      s.put(next, "current");
+      if (library) t.objectStore(LIBRARY).put(library, "current");
+      out.result = true;
+    };
+    return out;
+  }), false);
 }
 
 export function recall() {
@@ -101,7 +139,14 @@ export function removeSent(ids) {
 
 /** The sealed library: { name, placeKind, sealed, savedAt }. */
 export function saveLibrary(record) {
-  return safely(() => run(LIBRARY, "readwrite", (s) => s.put(record, "current")), null);
+  return safely(async () => {
+    const out = { result: false };
+    await run(LIBRARY, "readwrite", (s) => {
+      s.put(record, "current").onsuccess = () => (out.result = true);
+      return out;
+    });
+    return out.result;
+  }, false);
 }
 
 export function loadLibrary() {
@@ -119,6 +164,50 @@ export function loadDraft() {
 
 export function loadImage(name) {
   return safely(() => run(IMAGES, "readonly", (s) => s.get(name)), null).then((r) => r?.sealed ?? null);
+}
+
+// --- sealed again under a new key ---------------------------------------------------------
+//
+// When the phone moves this computer to a new key, everything kept is sealed
+// again under it, one record at a time (sync.js keepMoved). The library is
+// written whole by the page, so it is not among these.
+
+/** Where every sealed record other than the library is: [{ store, id }]. */
+export async function sealedRefs() {
+  const refs = [];
+  for (const [store, list] of [[SENT, (s) => s.getAllKeys()], [IMAGES, (s) => s.getAllKeys()], [LIBRARY, (s) => s.getAllKeys()]]) {
+    const ids = (await safely(() => run(store, "readonly", list), [])) ?? [];
+    for (const id of ids) if (store !== LIBRARY || id === "draft") refs.push({ store, id });
+  }
+  return refs;
+}
+
+const sealedOf = (store, record) => (store === LIBRARY ? record : record?.sealed ?? null);
+
+/** The sealed bytes at [ref], or null. */
+export async function getSealed(ref) {
+  const record = await safely(() => run(ref.store, "readonly", (s) => s.get(ref.id)), null);
+  return sealedOf(ref.store, record);
+}
+
+/**
+ * Puts [after] at [ref] in place of [before], and only if [before] is still
+ * what is there: a write that landed meanwhile is newer, and stays.
+ */
+export function swapSealed(ref, before, after) {
+  return safely(() => run(ref.store, "readwrite", (s) => {
+    const out = { result: false };
+    const get = s.get(ref.id);
+    get.onsuccess = () => {
+      const record = get.result;
+      const now = sealedOf(ref.store, record);
+      if (!now || now.length !== before.length || !now.every((b, i) => b === before[i])) return;
+      if (ref.store === LIBRARY) s.put(after, ref.id);
+      else s.put({ ...record, sealed: after });
+      out.result = true;
+    };
+    return out;
+  }), false);
 }
 
 /** Keeps a sealed picture, and lets the oldest go past MAX_IMAGES. */

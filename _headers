@@ -17,7 +17,7 @@
 # it cannot later send the tab somewhere else.
 /desktop/*
   ! Content-Security-Policy
-  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-WlhVgwCZmXWLHEaGI/6q27zdvNaUOvHO86Y3g4O14tg='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'sha256-Q0N8d6Omd3Qef+5INmkcBRBL1zW1FsKaVROocHh+//M='; style-src 'unsafe-inline'; img-src 'self' blob: data:; media-src blob:; font-src 'self'; manifest-src 'self'; connect-src https://api.captry.app wss://api.captry.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   ! X-Robots-Tag
   X-Robots-Tag: noindex
   Cross-Origin-Opener-Policy: same-origin
